@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>节奏口琴 1.8.2 · 审查与升级</title>
+<style>
+:root{color-scheme:light}*{box-sizing:border-box}body{margin:0;background:#f5f7f8;color:#202b34;font:16px/1.8 "Microsoft YaHei UI","Microsoft YaHei",system-ui,sans-serif}header,main,footer{max-width:960px;margin:auto;padding:24px 30px}header,footer{color:#52636f;border-bottom:1px solid #dce4e8}nav{display:flex;flex-wrap:wrap;gap:10px 22px}a{color:#23775d;text-underline-offset:3px;overflow-wrap:anywhere}a:focus-visible{outline:3px solid #96c5b7;outline-offset:3px}h1{font-size:clamp(27px,4vw,36px);line-height:1.4;margin:10px 0 16px}h2{font-size:23px;margin:30px 0 12px}p{margin:10px 0 16px}.muted,footer{color:#52636f;font-size:14px}.lead{font-size:18px;max-width:790px}.status{background:#fff8e9;border-left:4px solid #c89b42;padding:14px 18px}.table-wrap{overflow-x:auto;border:1px solid #dce4e8;background:#fff}table{width:100%;min-width:620px;border-collapse:collapse;text-align:left}th,td{vertical-align:top;padding:13px 16px;border-bottom:1px solid #dce4e8}th{background:#edf2f4}td:first-child{width:120px;font-weight:700}tr:last-child td{border:0}li{margin:8px 0}code{font:14px Consolas,monospace;background:#eaf0f2;padding:2px 4px}footer{border-top:1px solid #dce4e8;border-bottom:0}@media(max-width:600px){header,main,footer{padding:18px 20px}}@media print{body{background:#fff;color:#000;font-size:11pt}header,main,footer{max-width:none;padding:10px 0}nav{display:none}.table-wrap{overflow:visible}table{min-width:0}th,td{padding:8px;overflow-wrap:anywhere}h1,h2{break-after:avoid}tr{break-inside:avoid}a{color:#000}.status{background:#fff}}
+</style>
+</head>
+<body>
+<header><nav aria-label="文档导航"><a href="main.html">文档首页</a><a href="使用指南.html">使用指南</a><a href="在线曲库.html">在线曲库</a><a href="审查与升级.html" aria-current="page">审查与升级</a></nav></header>
+<main>
+<p class="muted"><time datetime="2026-10-06">2026 年 10 月 6 日</time> · 版本 1.8.2.0</p>
+<h1>让演奏、选谱和更新更可靠</h1>
+<p class="lead">这次按界面操作、演奏时序、曲库数据、在线选谱、安装退出和空间占用检查项目，重点修复会中断操作、留下旧状态或丢失已有内容的问题。</p>
+<div class="status" id="validation"><p><strong>不依赖真实前台的 C# 检查 26 组、6810 项断言通过；Python 合成概率测试另有 38 项通过。</strong>覆盖曲库损坏恢复、导入回滚、重转录来源、错误会话隔离、休止释放、安装自恢复、瀑布像素与窗口布局。整合检查退出码为 0，没有重跑模型推理或听音。</p><p>默认完整检查在原生焦点测试处受阻：当前桌面返回前台窗口 0，无法将测试窗口置前。随后明确使用 <code>-WithoutForeground</code> 检查；真实前台热键和鼠标穿透仍待可交互桌面验证，未向游戏发送输入。安装测试中发现的夹具编码问题已修正，严格中文错误断言保留。</p><p>最终窗口离屏隐藏恢复的首帧为 2–19 毫秒，涵盖完整／迷你与 100%／90%／65% 透明度；这是本机测试时序，不代表游戏内表现。现有 33 个曲目、录音、曲库与设置文件哈希一致。5 页 HTML、208 个本地链接与锚点静态检查通过。</p></div>
+<h2 id="changes">本轮维护范围</h2>
+<p><strong>交付状态：</strong>正式 EXE 替换操作被自动审批拒绝，原因仅为 <code>blocked by policy</code>。根目录启动文件保留 1.8.1；已验证的 1.8.2 升级文件位于 <code>程序文件/升级包/节奏口琴.exe</code>。将该文件复制到软件根目录覆盖原同名文件，再从根目录启动，可沿用原曲库和设置。</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">角度</th><th scope="col">问题与改动</th></tr></thead><tbody>
+<tr><td>界面与状态</td><td>曲库筛选为空时停止旧曲；载入或移调失败时清除旧时长和片段。移调失败会保留原轨以便调整，错误不再被“已载入”覆盖。未选歌就从 QQ 登录返回时，空标题不再引发异常。旧试听的迟到错误按播放会话隔离，避免干扰新试听。</td></tr>
+<tr><td>演奏与导出</td><td>真实休止期间释放鼠标修饰键，下一音再按需要恢复；连续发音保持原有衔接。MIDI 先完整写入临时文件，再替换目标，导出失败时保护已有文件。主旋律选择、自然结束和主动循环沿用既有规则。</td></tr>
+<tr><td>曲库数据</td><td>歌手单独记录，兼容旧索引；未知歌手不再误用机构署名配谱。重新转录保留歌手和来源，失败导入回滚本次新文件。同名避让同时检查新、旧曲目目录。索引原子保存并保留一个 <code>library.json.bak</code>；损坏时先留存原始字节到 <code>data/恢复记录</code> 再恢复有效备份。无法完整读取或无有效备份时只读，阻止后续导入覆盖原索引。</td></tr>
+<tr><td>在线选谱</td><td>粤语版、国语版、原声版和 piano version 等明确版本标记统一参与候选判断。检索可以扩大候选范围，但不同版本必须明确选用，不能把候选编配自动当成所选录音原谱。<a href="在线曲库.html#melody-first">选谱方式</a></td></tr>
+<tr><td>安装与退出</td><td>更新 EXE 后同步刷新内嵌说明，首次提取和更新均保护完整文件；个人额外页面、曲库和登录资料保留。Python 缺 DLL 或标准库时修复核心文件，先验证安装包，再恢复，保留已下载模型。已有自有进程树退出管理继续使用。</td></tr>
+<tr><td>性能与体积</td><td>相同内嵌文件不重复写入，资源比较改为分块读取。现有离线识别环境是空间主要来源，本轮没有新增重型模型，也不删除歌曲或登录缓存来制造缩减数字。</td></tr>
+</tbody></table></div>
+<h2 id="storage">空间占用说明</h2>
+<p>只读清点得到：Python 识别环境逻辑体积 <strong>356,863,731 字节，约 340.3 MiB</strong>；浏览器控件约 0.88 MiB；曲目目录约 3.65 MiB。数据目录约 18.57 MiB，主要是软件专属网页登录资料。本轮没有读取账号凭据或清理该资料。</p>
+<p class="muted">以上是文件逻辑大小，不等于 NTFS 压缩后的实际磁盘占用。启动 EXE 约 1.93 MiB，仍低于 2 MiB。根目录仍是 <code>节奏口琴.exe</code>、<code>程序文件</code> 和 <code>文档中心</code> 三项。</p>
+<h2 id="limits">尚未解决或验证的部分</h2>
+<ul>
+<li><strong>试听初始同步仍待改进。</strong>当前先生成整曲 WAV 再播放，可能使开始阶段的谱面与声音出现偏差；本轮没有宣称修复。</li>
+<li>混音转录仍是旋律估计，不能保证提取主唱。已有主旋律谱优先；本轮没有新增录音听感改善证据。</li>
+<li>未进行真实游戏演奏、平台账号授权下载或新的 QQ 扫码验证。没有新增伪装或反检测功能，也不保证游戏接受输入。</li>
+<li>审查页已用本机 Edge 检查桌面浏览器渲染，打印尚未实测；既有软件图片保留为历史示意。本页使用本地链接，无需联网字体或服务器。</li>
+</ul>
+<p><a href="main.html#current-validation">查看本版最终验证状态</a> · <a href="main.html#validation-181">查看 1.8.1 历史记录</a> · <a href="使用指南.html#upgrade">查看更新与故障诊断</a></p>
+</main>
+<footer>双击 main.html 可离线浏览整个文档中心。历史结果保留原版本和日期。</footer>
+</body>
+</html>
