@@ -14,6 +14,7 @@ namespace HarmonicaStudio.Tests
             checks = 0;
             ClipAndLoop();
             RestsAndTempo();
+            PlayableOutputKeepsScoreTime();
             BackgroundSynchronization();
             ValidMelodyTail();
             ConservativeTranscriptionTail();
@@ -91,6 +92,34 @@ namespace HarmonicaStudio.Tests
                 "所有背景音均在共同时间轴范围内");
             Near(accompaniment.Notes[0].Start, -2, "不修改负起点源背景");
             Check(!Object.ReferenceEquals(plan.BackgroundTracks[0], accompaniment), "背景轨及音符为独立快照");
+        }
+
+        private static void PlayableOutputKeepsScoreTime()
+        {
+            NoteEvent[] source = { N(40, 0, 0.5), N(60, 0.5, 0.5), N(110, 1, 0.5),
+                N(62, 1.5, 0.5), N(110, 2, 0.5) };
+            PlaybackPlan output = PlaybackPlan.PreparePlayableOutput(source, 3, 60);
+            Check(output.Notes.Count == 2 && output.Notes[0].Pitch == 60 && output.Notes[1].Pitch == 62,
+                "输出只保留与自动演奏同一映射可奏的音符");
+            Near(output.Notes[0].Start, 0.5, "超域前导音成为休止，不把首个可奏音移到零时刻");
+            Near(output.Notes[1].Start, 1.5, "超域中间音成为原时段休止，后续音不提前");
+            Near(output.Notes[1].Duration, 0.5, "可奏音时值不被前后休止拉长");
+            Near(output.Duration, 3, "超域尾音及原尾休止不缩短指定计划");
+            Check(output.Notes[0].Velocity == 90 && source.Length == 5 && source[0].Pitch == 40,
+                "保留力度与原始超域音，显示和重新移调仍有原数据");
+            Check(!Object.ReferenceEquals(output.Notes[0], source[1]), "可奏输出为独立音符副本");
+            output.Notes[0].Start = 9;
+            Near(source[1].Start, 0.5, "输出的后续变速不修改显示计划");
+            PlaybackPlan silence = PlaybackPlan.PreparePlayableOutput(new[] { N(110, 1, 1) }, 4, 60);
+            Check(silence.Notes.Count == 0, "全部超域时输出为空，不伪造静音音符");
+            Near(silence.Duration, 4, "纯休止快照仍保留计划终点");
+            Check(PlaybackPlan.PreparePlayableOutput(new[] { N(110, 1, 1) }, 4, 96).Notes.Count == 1,
+                "根据当前基准音重新判断可奏性，不缓存旧映射");
+            var chromatic = Enumerable.Range(0, 128).Select(i => N(i, i, 0.5)).ToArray();
+            foreach (int root in new[] { 36, 60, 84 })
+                Check(PlaybackPlan.PreparePlayableOutput(chromatic, 128, root).Notes.Select(n => n.Pitch)
+                    .SequenceEqual(chromatic.Where(n => HarmonicaMap.Map(n.Pitch, root).Playable).Select(n => n.Pitch)),
+                    "全部 MIDI 音高与当前口琴映射一致：" + root);
         }
 
         private static void ValidMelodyTail()

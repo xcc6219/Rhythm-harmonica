@@ -20,6 +20,7 @@ public static class SettingsAudioTests
         TestCancellation();
         TestPublicValidation();
         TestPlannedDuration();
+        TestPlayableRestRendering();
         TestFailureSessions();
         Console.WriteLine("设置与本地音频测试通过，共 " + checks + " 项断言（未播放音频）。");
         return checks;
@@ -254,6 +255,46 @@ public static class SettingsAudioTests
     private static string Text(byte[] data, int start, int length)
     {
         return Encoding.ASCII.GetString(data, start, length);
+    }
+
+    private static void TestPlayableRestRendering()
+    {
+        NoteEvent[] source = {
+            new NoteEvent { Pitch = 40, Velocity = 100, Start = 0, Duration = 0.5 },
+            new NoteEvent { Pitch = 60, Velocity = 100, Start = 0.5, Duration = 0.5 },
+            new NoteEvent { Pitch = 110, Velocity = 100, Start = 1, Duration = 0.5 },
+            new NoteEvent { Pitch = 62, Velocity = 100, Start = 1.5, Duration = 0.5 },
+            new NoteEvent { Pitch = 110, Velocity = 100, Start = 2, Duration = 0.5 }
+        };
+        PlaybackPlan plan = PlaybackPlan.PreparePlayableOutput(source, 3, 60);
+        foreach (double speed in new[] { 0.5, 1.0, 1.5 })
+        {
+            byte[] wave = RenderPrepared(plan.Notes, 0, speed, plan.Duration);
+            Assert(wave.Length == 44 + (int)Math.Ceiling(3 / speed * 16000) * 2,
+                "可奏试听保留包括超域尾音在内的完整变速时间轴。");
+            Assert(Peak(wave, 0.05 / speed, 0.4 / speed) == 0 &&
+                Peak(wave, 1.05 / speed, 1.4 / speed) == 0 && Peak(wave, 2.05 / speed, 3 / speed) == 0,
+                "不可奏的前导、中间、尾部音都在原时段静音。");
+            Assert(Peak(wave, 0.6 / speed, 0.9 / speed) > 1000 && Peak(wave, 1.6 / speed, 1.9 / speed) > 1000,
+                "两段可奏旋律仍按原时刻发声，未压缩中间休止。");
+        }
+        byte[] resumed = RenderPrepared(plan.Notes, 1.25, 1, plan.Duration);
+        Assert(Peak(resumed, 0.01, 0.2) == 0 && Peak(resumed, 0.35, 0.6) > 1000 && Peak(resumed, 0.8, 1.7) == 0,
+            "从超域休止中间继续试听，后续音按剩余时间进入并保留尾休止。");
+        byte[] generic = RenderPrepared(new[] { source[0] }, 0, 1, 0.5);
+        Assert(Peak(generic, 0.1, 0.4) > 1000, "通用 AudioPreview 仍可渲染口琴音域之外的合法 MIDI 音高。");
+        Assert(source.Length == 5 && source[2].Pitch == 110 && source[3].Start == 1.5,
+            "输出试听不修改原始显示计划。");
+    }
+
+    private static byte[] RenderPrepared(IList<NoteEvent> notes, double position, double speed, double duration)
+    {
+        MethodInfo prepare = typeof(AudioPreview).GetMethod("Prepare", BindingFlags.Static | BindingFlags.NonPublic);
+        object request = prepare.Invoke(null, new object[] { notes, position, speed, (double?)duration });
+        Type type = request.GetType();
+        return (byte[])typeof(AudioPreview).GetMethod("RenderWave", BindingFlags.Static | BindingFlags.NonPublic)
+            .Invoke(null, new object[] { type.GetField("Notes").GetValue(request), position, speed,
+                (double)type.GetField("Seconds").GetValue(request), CancellationToken.None });
     }
 
     private static void TestFailureSessions()

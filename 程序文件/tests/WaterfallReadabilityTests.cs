@@ -19,6 +19,10 @@ public static class WaterfallReadabilityTests
         checks = 0;
         foreach (float dpi in new[] { 96f, 144f, 192f })
         {
+            TestCurrentAndNextCues(dpi, false);
+            TestCurrentAndNextCues(dpi, true);
+            TestCurrentMouseLegend(dpi, false);
+            TestCurrentMouseLegend(dpi, true);
             TestDenseSameColumn(dpi, false);
             TestDenseSameColumn(dpi, true);
             TestHeldNoteSeparation(dpi);
@@ -38,6 +42,130 @@ public static class WaterfallReadabilityTests
         }
         Console.WriteLine("瀑布可读性测试通过，共 " + checks + " 项断言（真实像素、96/144/192 DPI，未发送键鼠输入）。");
         return checks;
+    }
+
+    private static void TestCurrentAndNextCues(float dpi, bool compact)
+    {
+        using (var canvas = NewCanvas(compact, 0))
+        {
+            canvas.Notes = new List<NoteEvent> { Note(60, 100, .2) };
+            using (var first = Render(canvas, dpi))
+            {
+                canvas.Notes = new List<NoteEvent> { Note(75, 100, .2) };
+                using (var next = Render(canvas, dpi))
+                    Assert(ChangedPixels(first, next, canvas.ToClient(new RectangleF(388, 8, 796, 52))) > 15,
+                        "下一音尚未落入瀑布时，固定提示也须明确显示它的键盘及鼠标指法。");
+            }
+            Assert((string)Call(canvas, "CurrentCueText") == "当前 等待首音", "首音之前须明确等待首音，不能误称休止或结束。");
+            Assert((string)Call(canvas, "NextCueText") == "下一音 X · 右键 + 中键", "下一音须完整说明高八度半音的真实组合键。");
+            canvas.Notes = new List<NoteEvent> { Note(75, 1, .2), Note(49, 1.4, .2), Note(120, 2, .2) };
+            canvas.TimelineDuration = 8;
+            double[] positions = { 1.1, 1.2, 1.5, 2.1, 2.2 };
+            string[] currentTexts = { "当前 X · 右键 + 中键", "当前 休止 · 松开按键", "当前 Z · 左键 + 中键", "当前 超出音域 · 休止", "当前 旋律已结束" };
+            string[] nextTexts = { "下一音 Z · 左键 + 中键", "下一音 Z · 左键 + 中键", "下一音 超出音域 · 休止", "下一音 无", "下一音 无" };
+            for (int i = 0; i < positions.Length; i++)
+            {
+                canvas.Position = positions[i];
+                using (var frame = Render(canvas, dpi))
+                using (var paused = Render(canvas, dpi))
+                {
+                    string current = (string)Call(canvas, "CurrentCueText"), next = (string)Call(canvas, "NextCueText");
+                    Assert(current == currentTexts[i] && next == nextTexts[i], "固定指法须区分当前、休止、超域与旋律末尾：" + positions[i]);
+                    Assert(EqualPixels(frame, paused), "当前/下一音提示须与暂停的音乐时间一起冻结。");
+                    CheckCueFits(canvas, frame, "CurrentCueBounds", current);
+                    CheckCueFits(canvas, frame, "NextCueBounds", next);
+                }
+            }
+            Assert(canvas.TimelineDuration == 8 && canvas.Notes[0].Pitch == 75 && canvas.Notes[2].Pitch == 120,
+                "显示提示不能删改原音符、超域音或尾静音时长。");
+            canvas.Position = 0; canvas.Notes = new List<NoteEvent>();
+            using (var empty = Render(canvas, dpi))
+                Assert((string)Call(canvas, "CurrentCueText") == "当前 等待乐谱" && (string)Call(canvas, "NextCueText") == "下一音 等待乐谱",
+                    "无音符时须等待乐谱，不能显示旋律结束。");
+
+            canvas.SongTitle = "一首名字很长但仍需明确旋律来源的示例歌曲";
+            foreach (string role in new[] { "旋律估计", "旋律候选" })
+            {
+                canvas.SongSubtitle = role + " · 独奏声轨 · 1200 个音符 · 4 个声轨";
+                using (var frame = Render(canvas, dpi))
+                {
+                    string caption = (string)Call(canvas, "SongCaption");
+                    Assert(caption.StartsWith(role + " · ", StringComparison.Ordinal), "不确定性标记须放在曲名前，长标题也不能隐藏它。");
+                    var tooltip = (ToolTip)Field(canvas, "backgroundTip");
+                    Assert(tooltip.GetToolTip(canvas).Contains(canvas.SongSubtitle), "完整曲目元数据须保留在谱面提示中。");
+                    RectangleF roleArea = canvas.ToClient(new RectangleF(398, 10, 90, 24));
+                    using (var normal = NewCanvas(compact, 0))
+                    {
+                        normal.SongTitle = canvas.SongTitle;
+                        using (var baseline = Render(normal, dpi))
+                            Assert(ChangedPixels(frame, baseline, roleArea) > 20, "候选/估计标记须在实际第一行中绘制。");
+                    }
+                }
+            }
+        }
+    }
+
+    private static void CheckCueFits(ScoreCanvas canvas, Bitmap image, string boundsName, string text)
+    {
+        RectangleF bounds = Bounds(canvas, boundsName), raw = RawBounds(canvas, boundsName);
+        using (Graphics g = Graphics.FromImage(image))
+        {
+            Font font = (Font)Field(canvas, "smallFont");
+            Assert(g.MeasureString(text, font).Width <= raw.Width - 4,
+                "当前与下一音的完整组合键不得被省略：" + text);
+        }
+        Rectangle box = Pixels(image, bounds);
+        int left = image.Width, right = -1, top = image.Height, bottom = -1;
+        for (int y = box.Top; y < box.Bottom; y++) for (int x = box.Left; x < box.Right; x++)
+        {
+            Color pixel = image.GetPixel(x, y);
+            // Header cues use gold, white, or pink; the shared light-text
+            // detector intentionally excludes gold and is unsuitable here.
+            if (pixel.R < 180 || pixel.G < 140) continue;
+            left = Math.Min(left, x); right = Math.Max(right, x); top = Math.Min(top, y); bottom = Math.Max(bottom, y);
+        }
+        Rectangle ink = right < left ? Rectangle.Empty : Rectangle.FromLTRB(left, top, right + 1, bottom + 1);
+        Assert(!ink.IsEmpty && ink.Height >= 10 && ink.Top >= bounds.Top && ink.Bottom <= bounds.Bottom + 1,
+            "固定指法须保留完整可读字形且不侵入相邻行：" + text);
+    }
+
+    private static void TestCurrentMouseLegend(float dpi, bool compact)
+    {
+        using (var canvas = NewCanvas(compact, 0))
+        using (var idle = Render(canvas, dpi))
+        {
+            int[] pitches = { 60, 61, 48, 49, 74, 75 };
+            for (int activeRow = 0; activeRow < pitches.Length; activeRow++)
+            {
+                canvas.Notes = new List<NoteEvent> { Note(pitches[activeRow], 0, .2) };
+                using (var active = Render(canvas, dpi))
+                    for (int row = 0; row < pitches.Length; row++)
+                    {
+                        RectangleF bounds = MouseRowInterior(canvas, row);
+                        int changed = ChangedPixels(active, idle, bounds);
+                        Assert(row == activeRow ? changed > bounds.Width : changed == 0,
+                            "当前音必须精确高亮一个鼠标组合，包含不按鼠标的普通音：" + activeRow + "/" + row);
+                    }
+            }
+            canvas.Notes = new List<NoteEvent> { Note(75, 0, .2), Note(120, 1, .2) };
+            foreach (double position in new[] { .3, 1.1, 2.0 })
+            {
+                canvas.Position = position;
+                using (var inactive = Render(canvas, dpi))
+                    for (int row = 0; row < pitches.Length; row++)
+                        Assert(ChangedPixels(inactive, idle, MouseRowInterior(canvas, row)) == 0,
+                            "休止、超域及旋律结束时不得残留鼠标组合高亮。");
+            }
+        }
+    }
+
+    private static RectangleF MouseRowInterior(ScoreCanvas canvas, int row)
+    {
+        RectangleF bounds = canvas.ToClient((RectangleF)Call(canvas, "LegendRowBounds", row));
+        // Fractional scaled boundaries otherwise make neighboring rows count
+        // the same antialiased edge pixel twice.
+        return RectangleF.FromLTRB((float)Math.Ceiling(bounds.Left), (float)Math.Ceiling(bounds.Top),
+            (float)Math.Floor(bounds.Right), (float)Math.Floor(bounds.Bottom));
     }
 
     private static void TestDenseSameColumn(float dpi, bool compact)
@@ -210,6 +338,9 @@ public static class WaterfallReadabilityTests
             {
                 Assert((int)Call(canvas, "FirstStartingAfter", canvas.Position) - 1 == 9000,
                     "极密集片段中段须正确找到实际当前音，而非被过去绘制预算截掉。");
+                Assert((string)Call(canvas, "CurrentCueText") == "当前 C · 不按鼠标" &&
+                    (string)Call(canvas, "NextCueText") == "下一音 C · 不按鼠标",
+                    "密集音符退化为短条时，当前与下一音的完整指法仍须保留在固定提示。");
                 RectangleF active = Head(canvas, 9000, true);
                 Near(active.Bottom, Value(canvas, "JudgmentY"), "极密集段的当前音仍须对齐判定线。");
                 using (var noNotes = NewCanvas(false, canvas.Position))

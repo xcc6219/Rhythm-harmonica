@@ -14,6 +14,25 @@ namespace HarmonicaStudio
 
         private PlaybackPlan() { }
 
+        // Prepared score notes remain available to the canvas and transposition.
+        // Output omits unplayable notes without moving later notes or the end time.
+        internal static PlaybackPlan PreparePlayableOutput(IList<NoteEvent> notes, double duration, int basePitch)
+        {
+            if (notes == null) throw new ArgumentNullException("notes");
+            if (!Finite(duration) || duration < 0 || duration > ScoreIO.MaximumDurationSeconds)
+                throw new ArgumentOutOfRangeException("duration");
+            if (basePitch < 0 || basePitch > 127) throw new ArgumentOutOfRangeException("basePitch");
+            var output = new List<NoteEvent>();
+            foreach (NoteEvent note in notes)
+            {
+                if (note == null) throw new ArgumentException("演奏计划包含空音符。", "notes");
+                if (!HarmonicaMap.Map(note.Pitch, basePitch).Playable) continue;
+                output.Add(new NoteEvent { Pitch = note.Pitch, Velocity = note.Velocity,
+                    Start = note.Start, Duration = note.Duration });
+            }
+            return new PlaybackPlan { Notes = output, Duration = duration };
+        }
+
         // start/end use the source score clock. targetSeconds is wall time at speed;
         // zero means one natural pass. A cycle includes the segment's actual rests.
         public static PlaybackPlan Build(IList<NoteEvent> melody, IList<ScoreTrack> backgrounds,

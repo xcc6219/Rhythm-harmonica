@@ -47,6 +47,8 @@ public static class PlaybackWindowTests
             IntPtr unused = form.Handle;
             for (int i = 1; i <= 5; i++) UnregisterHotKey(form.Handle, i);
             PlannedMainForm(form);
+            UnplayablePreviewDoesNotConsumeAudioLimit();
+            ExportPlayableTimeline(form);
             RangeDialog();
             ResizeAndPersistence(form, settingsPath);
             reloaded = new MainForm();
@@ -151,6 +153,95 @@ public static class PlaybackWindowTests
         using (var slow = new PlaybackRangeDialog(120, 0, 0, 0, false, 0.5))
             Check(Field<NumericUpDown>(slow, "total").Maximum <= (decimal)ScoreIO.MaximumDurationSeconds,
                 "半速窗口总时长最大值不能超出播放计划四小时实际上限");
+    }
+
+    private static void UnplayablePreviewDoesNotConsumeAudioLimit()
+    {
+        MainForm previewForm = new MainForm(false);
+        try
+        {
+            Field<System.Windows.Forms.Timer>(previewForm, "timer").Stop();
+            var source = Enumerable.Range(0, 20001).Select(i => N(110, 0, 0.5)).ToList();
+            source.Add(N(60, 0.5, 0.5));
+            Set(previewForm, "notes", source); Set(previewForm, "noteDuration", 2.0);
+            // Disposing the real backend prevents any worker or device access.
+            // Its validation still detects whether StartAudio sent raw skipped notes.
+            Field<AudioPreview>(previewForm, "audio").Dispose();
+            Call(previewForm, "StartAudio");
+            string status = Field<Label>(previewForm, "statusLabel").Text;
+            Check(status.Contains("试听失败") && !status.Contains("20000"),
+                "实际主窗试听先排除不可奏音，不让作为休止的音符耗尽音频数量限制");
+            Check(source.Count == 20002 && source[0].Pitch == 110,
+                "试听过滤保留显示计划中的超域音供提示和重新移调");
+        }
+        finally { DisposeForm(previewForm); }
+    }
+
+    private static void ExportPlayableTimeline(MainForm form)
+    {
+        string path = Path.Combine(AppPaths.RootDirectory, "playable-output-" + Guid.NewGuid().ToString("N") + ".mid");
+        var source = new[] { N(40, 0, 0.5), N(60, 0.5, 0.5), N(110, 1, 0.5),
+            N(62, 1.5, 0.5), N(110, 2, 0.5) };
+        AppSettings settings = Field<AppSettings>(form, "settings");
+        try
+        {
+            foreach (double speed in new[] { 0.5, 1.0, 1.5 })
+            {
+                PlaybackPlan plan = PlaybackPlan.Build(source, null, 0, 3, 7, true, speed);
+                settings.Speed = speed; settings.BasePitch = 60;
+                Set(form, "notes", plan.Notes); Set(form, "noteDuration", plan.Duration);
+                Call(form, "SaveCurrentMidi", path);
+                List<NoteEvent> read = ScoreIO.LoadMidi(path).Tracks[0].Notes;
+                List<NoteEvent> expected = plan.Notes.Where(n => HarmonicaMap.Map(n.Pitch, 60).Playable).ToList();
+                Check(read.Count == expected.Count && read.All(n => HarmonicaMap.Map(n.Pitch, 60).Playable),
+                    "实际主窗导出只写可奏旋律，循环中的超域音不漏出");
+                for (int i = 0; i < read.Count; i++)
+                {
+                    Check(read[i].Pitch == expected[i].Pitch && read[i].Velocity == expected[i].Velocity,
+                        "实际 MIDI 往返保留可奏音高与力度");
+                    Check(Math.Abs(read[i].Start - expected[i].Start / speed) <= 1.0 / MidiWriter.TicksPerSecond,
+                        "导出只换算一次速度，循环起音与中间休止不提前");
+                    Check(Math.Abs(read[i].Duration - expected[i].Duration / speed) <= 1.0 / MidiWriter.TicksPerSecond,
+                        "导出只换算一次可奏音长");
+                }
+                Near(ReadMidiEndSeconds(File.ReadAllBytes(path)), 7,
+                    "真实 MIDI 结束事件保留目标七秒，含超域尾音与尾休止");
+                Check(Object.ReferenceEquals(Field<List<NoteEvent>>(form, "notes"), plan.Notes) &&
+                    plan.Notes.Any(n => n.Pitch == 110), "导出不替换或删除主窗显示计划中的不可奏音");
+            }
+            Near(source[1].Start, 0.5, "多次变速导出不修改源 MIDI 起音");
+            Near(source[3].Duration, 0.5, "多次变速导出不修改源 MIDI 时值");
+        }
+        finally
+        {
+            settings.Speed = 1;
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    private static double ReadMidiEndSeconds(byte[] bytes)
+    {
+        int cursor = 22, tick = 0;
+        while (cursor < bytes.Length)
+        {
+            tick += ReadVariable(bytes, ref cursor);
+            int status = bytes[cursor++];
+            if (status == 0xff)
+            {
+                int type = bytes[cursor++], length = ReadVariable(bytes, ref cursor);
+                if (type == 0x2f) return tick / (double)MidiWriter.TicksPerSecond;
+                cursor += length;
+            }
+            else if (status == 0x80 || status == 0x90) cursor += 2;
+            else throw new Exception("导出 MIDI 出现未预期事件。");
+        }
+        throw new Exception("导出 MIDI 缺少结束事件。");
+    }
+    private static int ReadVariable(byte[] bytes, ref int cursor)
+    {
+        int value = 0, part;
+        do { part = bytes[cursor++]; value = (value << 7) | (part & 0x7f); } while ((part & 0x80) != 0);
+        return value;
     }
 
     private static void ResizeAndPersistence(MainForm form, string settingsPath)

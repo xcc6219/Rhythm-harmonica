@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>节奏口琴 1.8.2 · 文档中心</title>
+  <title>节奏口琴 1.8.3 · 文档中心</title>
   <style>
     :root{color-scheme:light;--ink:#202b34;--muted:#52636f;--line:#dce4e8;--accent:#23775d;--paper:#fff;--background:#f5f7f8;--notice:#fff8e9;--notice-line:#c89b42}
     *{box-sizing:border-box}body{margin:0;background:var(--background);color:var(--ink);font-family:"Microsoft YaHei UI","Microsoft YaHei",system-ui,sans-serif;line-height:1.8;font-size:16px}a{color:var(--accent);text-underline-offset:3px;overflow-wrap:anywhere}a:hover{text-decoration-thickness:2px}a:focus-visible{outline:3px solid #96c5b7;outline-offset:4px}header,main,footer{max-width:1000px;margin:auto;padding-left:32px;padding-right:32px}header{padding-top:25px;padding-bottom:22px;border-bottom:1px solid var(--line)}nav{display:flex;flex-wrap:wrap;gap:12px 24px;font-size:15px}nav a[aria-current="page"]{font-weight:700;text-decoration:none;color:var(--ink)}main{padding-top:40px;padding-bottom:44px}h1{font-size:clamp(28px,4vw,39px);line-height:1.4;margin:0 0 14px;letter-spacing:.02em}h2{font-size:23px;line-height:1.5;margin:0 0 16px}h3{font-size:18px;margin:0 0 5px}p{margin:10px 0 16px}.eyebrow{color:var(--accent);font-size:14px;font-weight:700;letter-spacing:.07em;margin:0 0 9px}.intro{max-width:760px;color:var(--muted);font-size:17px}.meta{color:var(--muted);font-size:14px}.notice{margin:27px 0 32px;background:var(--notice);border-left:4px solid var(--notice-line);padding:18px 22px}.notice p:last-child{margin-bottom:0}section{margin-top:35px}.entries{border-top:1px solid var(--line)}.entry{display:block;padding:21px 0;border-bottom:1px solid var(--line);text-decoration:none}.entry p{color:var(--muted);margin:4px 0 0}.entry h3{color:var(--accent)}ul{padding-left:24px;margin:10px 0 18px}li{margin:7px 0}.table-wrap{overflow-x:auto;background:var(--paper);border:1px solid var(--line);border-radius:5px}table{width:100%;border-collapse:collapse;text-align:left;min-width:560px}th,td{padding:12px 15px;border-bottom:1px solid var(--line);vertical-align:top}th{font-size:14px;color:var(--muted);background:#f8fafb}tr:last-child td{border-bottom:0}td:first-child{width:160px;font-weight:700}code{font-family:Consolas,"Courier New",monospace;font-size:.94em;background:#eaf0f2;padding:2px 5px;border-radius:3px}footer{color:var(--muted);font-size:14px;border-top:1px solid var(--line);padding-top:17px;padding-bottom:25px}footer p{margin:0}.small{font-size:14px;color:var(--muted)}
@@ -15,12 +15,19 @@
   <header><nav aria-label="文档导航"><a href="main.html" aria-current="page">文档首页</a><a href="使用指南.html">使用指南</a><a href="在线曲库.html">在线曲库</a><a href="开源参考.html">开源参考与政策</a><a href="审查与升级.html">审查与升级</a></nav></header>
   <main>
     <p class="eyebrow">RHYTHM HARMONICA</p>
+    <p><a href="演奏体验优化.html">口琴演奏与谱面优化：本轮计划及验证记录 →</a></p>
     <h1>节奏口琴</h1>
     <p class="intro">先选主旋律谱并试听，再点击标题栏<strong>“参考谱面”</strong>：左侧常驻六种鼠标指法与八键说明，右侧金色旋律向判定线流动。在线搜歌同页优先提供主旋律 MIDI，录音转录另行选择；已有曲目可右键查找主旋律谱并保留原谱。<a href="在线曲库.html#melody-first">查看选谱步骤</a> · <a href="使用指南.html#waterfall">查看图例与具体指法</a>。</p>
-    <p class="meta">更新日期：<time datetime="2026-10-06">2026 年 10 月 6 日</time> · 版本 1.8.2.0 · Windows 桌面程序</p>
+    <p class="meta">更新日期：<time datetime="2026-11-16">2026 年 11 月 16 日</time> · 版本 1.8.3.0 · Windows 桌面程序</p>
+    <section aria-labelledby="upgrade-183-title">
+      <h2 id="upgrade-183-title">版本 1.8.3：节奏一致，指法更清楚</h2>
+      <p>试听与导出使用当前口琴可奏音符，超音域音保留为休止，不把后续音符提前。自动吹奏在音长允许时预留同键重触与鼠标修饰切换的间隔，减少连续音逐次拖后的问题；极短音仍遵守最短按键时间。</p>
+      <p>谱面顶部显示当前与下一音指法，左侧鼠标图例同步高亮。休止、等待首音与旋律结束分别提示；旋律候选和估计标记继续显示。<a href="演奏体验优化.html">查看本轮实现与验证记录</a>。</p>
+      <p><a href="https://github.com/xcc6219/Rhythm-harmonica">GitHub 仓库：Rhythm-harmonica</a> · 下载项目后可在根目录 README 中查看快速开始、用途和构建命令。</p>
+    </section>
     <section aria-labelledby="upgrade-182-title">
       <h2 id="upgrade-182-title">版本 1.8.2：审查后的可靠性维护</h2>
-      <p class="notice"><strong>交付状态：1.8.2 已构建并验证，正式启动文件尚未替换。</strong>自动审批拒绝替换根目录启动程序，仅返回 blocked by policy。升级文件放在“程序文件／升级包／节奏口琴.exe”；将它复制到软件根目录、覆盖原同名文件后，即可沿用原曲库启动新版。</p>
+      <p class="small"><strong>历史交付记录（2026 年 10 月 6 日）：</strong>当时 1.8.2 已构建并验证，因自动审批拒绝覆盖根启动文件而另存升级包。此段保留当时状态；当前版本与验证结果见上方 1.8.3 入口。</p>
       <p>本轮修复登录返回空选歌、明确版本的选谱判断、旧目录同名避让、空筛选与载入失败状态，以及休止时鼠标修饰键释放。导出和内置资源改为完整写入后再替换，曲库保存与恢复增加保护；更新 EXE 后帮助同步更新，半解压的 Python 核心可以恢复并保留模型。<a href="审查与升级.html">查看多角度审查、空间占用与未解决事项</a>。</p>
       <p class="small" id="current-validation"><strong>版本 1.8.2：不依赖真实前台的 C# 检查 26 组、6810 项断言通过，另有 Python 合成概率测试 38 项通过。</strong>当前输入桌面返回前台窗口 0，默认完整检查无法完成焦点测试；本次明确排除真实前台热键及鼠标穿透断言，不能视为游戏输入验证。窗口离屏显隐与缩放仍已检查。现有 33 个曲目、录音、曲库及设置文件哈希保持不变。<a href="审查与升级.html#validation">查看本轮边界</a>；下方 1.8.1 及更早结果保留为历史。</p>
       <p class="small" id="packaging-current-validation">版本 1.8.2 启动 EXE 约 1.93 MiB，仍低于 2 MiB。本轮沿用已有离线识别环境，没有新增重型模型；根目录保留启动程序、程序文件、文档中心三项。</p>
@@ -107,8 +114,8 @@
       <h2 id="preview-title">历史界面参考</h2>
       <p class="small"><strong>9 张图片均沿用旧版本或模拟操作图，未更新为 1.8.1。</strong>图片中的图例、键位和控件位置可能与新版不同，请按上方说明及使用指南操作。它们不作为本轮窗口渲染、真实下载、转录准确度或游戏输入验证证据。</p>
       <details style="margin:18px 0;padding:14px 17px;border:1px solid var(--line);border-radius:5px;background:#fff"><summary style="cursor:pointer;font-weight:700">查看旧版窗口与模拟流程图片</summary>
-      <p><a href="assets/界面预览.png">旧版完整界面</a> · <a href="assets/迷你界面.png">旧版参考谱面</a> · <a href="assets/中文曲库.png">备用中文谱库示意</a> · <a href="assets/自动配谱.png">已有 MIDI 导入示意</a> · <a href="assets/音频转MIDI.png">下载音频转 MIDI 示意</a> · <a href="assets/免费曲库.png">备用免费谱示意</a> · <a href="assets/酷狗曲库.png">QQ／酷狗歌曲检索示意</a> · <a href="assets/自动模式.png">多轨指法与倒计时示意</a> · <a href="assets/热键设置.png">旧版热键与倒计时</a></p>
-      <figure style="margin:18px 0"><img src="assets/迷你界面.png" alt="旧版参考谱面窗口，供历史参考，图例与键位位置不代表版本1.8.1" style="display:block;width:100%;height:auto;border-radius:5px"><figcaption class="small" style="margin-top:9px">旧版原生窗口预览；静态图片不展示真实半透明桌面效果，也没有叠加游戏背景。1.8.1 本轮未新增窗口图片或 HTML 浏览器渲染。</figcaption></figure>
+      <p><a href="assets/界面预览.png">1.8.3 完整谱面</a> · <a href="assets/迷你界面.png">1.8.3 迷你谱面</a> · <a href="assets/中文曲库.png">备用中文谱库示意</a> · <a href="assets/自动配谱.png">已有 MIDI 导入示意</a> · <a href="assets/音频转MIDI.png">下载音频转 MIDI 示意</a> · <a href="assets/免费曲库.png">备用免费谱示意</a> · <a href="assets/酷狗曲库.png">QQ／酷狗歌曲检索示意</a> · <a href="assets/自动模式.png">历史多轨指法与倒计时示意</a> · <a href="assets/热键设置.png">历史热键与倒计时</a></p>
+      <figure style="margin:18px 0"><img src="assets/迷你界面.png" alt="1.8.3 迷你谱面：当前左键和中键高亮，下一音提示中键" style="display:block;width:100%;height:auto;border-radius:5px"><figcaption class="small" style="margin-top:9px">1.8.3 原生谱面控件的离屏渲染，使用合成音符展示接续指法；静态图片不表示真实游戏背景或演奏效果。</figcaption></figure>
       </details>
     </section>
     <section aria-labelledby="checks-title">

@@ -60,6 +60,7 @@ namespace HarmonicaStudio
         private float[] headTextHeights;
         private float preferredHeadHeight;
         private List<ScoreTrack> cachedBackgroundSource;
+        private string cachedBackgroundSubtitle;
         private int cachedBackgroundBase = -1, cachedSelectedTrack = Int32.MinValue;
         private readonly List<BackgroundTrackCache> backgroundCaches = new List<BackgroundTrackCache>();
         private readonly ToolTip backgroundTip = new ToolTip();
@@ -158,12 +159,14 @@ namespace HarmonicaStudio
         private void EnsureBackgroundCache()
         {
             if (Object.ReferenceEquals(cachedBackgroundSource, BackgroundTracks) &&
-                cachedBackgroundBase == BasePitch && cachedSelectedTrack == SelectedTrackIndex) return;
+                cachedBackgroundBase == BasePitch && cachedSelectedTrack == SelectedTrackIndex &&
+                cachedBackgroundSubtitle == SongSubtitle) return;
             cachedBackgroundSource = BackgroundTracks; cachedBackgroundBase = BasePitch;
+            cachedBackgroundSubtitle = SongSubtitle;
             cachedSelectedTrack = SelectedTrackIndex;
             backgroundCaches.Clear(); backgroundHiddenNotes = 0;
             selectedTrackName = "当前旋律"; backgroundPosition = Double.NaN;
-            if (BackgroundTracks == null) { backgroundTip.SetToolTip(this, ""); return; }
+            if (BackgroundTracks == null) { backgroundTip.SetToolTip(this, SongSubtitle ?? ""); return; }
             var description = new System.Text.StringBuilder("高亮音符为所选吹奏旋律；其他配色细条仅同步显示声轨，不参与自动输入。");
             foreach (ScoreTrack track in BackgroundTracks)
             {
@@ -194,6 +197,7 @@ namespace HarmonicaStudio
                 description.Append("\n背景：").Append(name).Append(" · ").Append(track.Notes.Count).Append(" 个源音符");
             }
             description.Insert(0, "吹奏：" + selectedTrackName + "\n");
+            if (!String.IsNullOrWhiteSpace(SongSubtitle)) description.Insert(0, SongSubtitle + "\n");
             if (backgroundHiddenNotes > 0) description.Append("\n有 ").Append(backgroundHiddenNotes).Append(" 个背景音符超域或无效，未绘制。");
             backgroundTip.SetToolTip(this, description.ToString());
         }
@@ -295,6 +299,8 @@ namespace HarmonicaStudio
         private RectangleF FingeringHintBounds { get { return HintBounds; } }
         private RectangleF MouseLegendBounds { get { return new RectangleF(8, 8, 360, 344); } }
         private RectangleF ProgressBounds { get { return new RectangleF(StageLeft, 340, StageWidth, 18); } }
+        private RectangleF CurrentCueBounds { get { return new RectangleF(StageLeft + 10, 34, StageWidth / 2 - 20, 24); } }
+        private RectangleF NextCueBounds { get { return new RectangleF(StageLeft + StageWidth / 2 + 10, 34, StageWidth / 2 - 20, 24); } }
         private RectangleF LegendRowBounds(int index)
         {
             RectangleF panel = MouseLegendBounds;
@@ -482,23 +488,53 @@ namespace HarmonicaStudio
                 countdownLabel = CountdownCaption(CountdownText);
             }
             float statusWidth = Math.Min(180, StageWidth * .30f);
-            string title = String.IsNullOrWhiteSpace(SongTitle) ? "选择歌曲，开始看谱" : SongTitle;
-            DrawText(g, "当前歌曲：" + title, largeHeaderFont, TextColor,
+            DrawText(g, SongCaption(), largeHeaderFont, TextColor,
                 new RectangleF(panel.X + 10, panel.Y + 2, panel.Width - statusWidth - 18, rowHeight), false);
             DrawText(g, countdown ? countdownLabel : (Automatic ? "自动吹奏" : "手动跟谱") + " · " + FutureSeconds + "秒预览",
                 labelFont, countdown ? GoldColor : MutedColor,
                 new RectangleF(panel.Right - statusWidth - 8, panel.Y + 2, statusWidth, rowHeight), true);
-            string now = current == null ? (visuals.Length == 0 ? "等待乐谱" : "休止 · 等待下一音") :
-                "此刻 " + (current.Finger.Playable ? current.Finger.Key + " · " + SpokenPitch(current.Finger) +
-                (current.MouseMask != 0 ? " · " + MouseButtonsText(current.MouseMask, true) : " · 不按鼠标") : "超出口琴音域");
-            string subtitle = String.IsNullOrWhiteSpace(SongSubtitle) ? "到达底线时按键 · 长条表示持续时长" : SongSubtitle;
-            if (!TrackLegendVisible && backgroundCaches.Count > 0)
-                subtitle = "金色演奏 · 彩色细条仅显示其他 " + backgroundCaches.Count + " 轨";
-            float nowWidth = Math.Min(290, panel.Width * .47f);
-            DrawText(g, subtitle, smallFont, MutedColor,
-                new RectangleF(panel.X + 10, panel.Y + rowHeight + 2, Math.Max(1, panel.Width - nowWidth - 22), rowHeight), false);
-            DrawText(g, now, smallFont, current != null && !current.Finger.Playable ? PinkColor : GoldColor,
-                new RectangleF(panel.Right - nowWidth - 9, panel.Y + rowHeight + 2, nowWidth, rowHeight), false);
+            DrawText(g, CurrentCueText(), smallFont, current != null && !current.Finger.Playable ? PinkColor : GoldColor,
+                CurrentCueBounds, false);
+            DrawText(g, NextCueText(), smallFont, TextColor, NextCueBounds, false);
+            using (var separator = new Pen(Color.FromArgb(82, 84, 69)))
+                g.DrawLine(separator, panel.X + panel.Width / 2, 38, panel.X + panel.Width / 2, 54);
+        }
+
+        private string SongCaption()
+        {
+            string title = String.IsNullOrWhiteSpace(SongTitle) ? "选择歌曲，开始看谱" : SongTitle;
+            string subtitle = SongSubtitle ?? "";
+            if (subtitle.StartsWith("旋律估计 · ", StringComparison.Ordinal)) return "旋律估计 · " + title;
+            if (subtitle.StartsWith("旋律候选 · ", StringComparison.Ordinal)) return "旋律候选 · " + title;
+            return "当前歌曲：" + title;
+        }
+
+        // The fixed cues remain readable when dense notes become short bars.
+        // Reuse the sorted visual cache; no whole-score work belongs in a frame.
+        private NoteVisual CurrentVisual()
+        {
+            int index = FirstStartingAfter(MusicPosition) - 1;
+            return index >= 0 && MusicPosition < visuals[index].Note.Start + visuals[index].Note.Duration
+                ? visuals[index] : null;
+        }
+        private static string FingeringCue(NoteVisual item)
+        {
+            return item.Finger.Playable ? item.Finger.Key + " · " + MouseButtonsText(item.MouseMask, true)
+                : "超出音域 · 休止";
+        }
+        private string CurrentCueText()
+        {
+            NoteVisual current = CurrentVisual();
+            if (current != null) return "当前 " + FingeringCue(current);
+            if (visuals.Length == 0) return "当前 等待乐谱";
+            int next = FirstStartingAfter(MusicPosition);
+            return next == 0 ? "当前 等待首音" : next < visuals.Length ? "当前 休止 · 松开按键" : "当前 旋律已结束";
+        }
+        private string NextCueText()
+        {
+            int next = FirstStartingAfter(MusicPosition);
+            return next < visuals.Length ? "下一音 " + FingeringCue(visuals[next]) :
+                visuals.Length == 0 ? "下一音 等待乐谱" : "下一音 无";
         }
 
         private RectangleF HeadBounds(NoteVisual item, bool active)
@@ -665,6 +701,7 @@ namespace HarmonicaStudio
 
         private void DrawMouseLegend(Graphics g)
         {
+            NoteVisual current = CurrentVisual();
             RectangleF panel = MouseLegendBounds;
             using (var fill = new SolidBrush(Color.FromArgb(46, 49, 45))) FillRounded(g, fill, panel, 7);
             using (var border = new Pen(Color.FromArgb(151, 146, 111)))
@@ -681,6 +718,13 @@ namespace HarmonicaStudio
             {
                 int mask = ModifierMask(LegendFingers[i]);
                 RectangleF row = LegendRowBounds(i);
+                if (current != null && current.Finger.Playable && current.MouseMask == mask)
+                {
+                    RectangleF highlight = RectangleF.Inflate(row, -.8f, -2);
+                    using (var fill = new SolidBrush(Color.FromArgb(52, GoldColor))) FillRounded(g, fill, highlight, 4);
+                    using (var line = new Pen(Color.FromArgb(205, GoldColor), 1.2f))
+                    using (var path = RoundedPath(highlight, 4)) g.DrawPath(line, path);
+                }
                 RectangleF block = new RectangleF(row.X + 2, row.Y + (row.Height - 22) / 2, iconWidth - 5, 22);
                 using (var fill = new SolidBrush(Color.FromArgb(190, GoldColor))) FillRounded(g, fill, block, 3);
                 using (var line = new Pen(Color.FromArgb(220, GoldColor)))

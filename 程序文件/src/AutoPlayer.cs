@@ -236,7 +236,21 @@ namespace HarmonicaStudio
                     delay += Math.Max(0, pressedAt - scheduled);
                     SetDelay(generation, delay);
                     SetPositionLimit(generation, note.Start + note.Duration);
-                    double end = pressedAt + Math.Max(45, note.Duration * 1000 / speed);
+                    double hold = note.Duration * 1000 / speed;
+                    if (noteIndex + 1 < notes.Count)
+                    {
+                        NoteEvent next = notes[noteIndex + 1];
+                        Fingering nextFingering = HarmonicaMap.Map(next.Pitch, basePitch);
+                        if (nextFingering.Playable)
+                        {
+                            double preparation = fingering.Key == nextFingering.Key ? 20 : 0;
+                            if (fingering.Modifier != nextFingering.Modifier) preparation = Math.Max(preparation, 35);
+                            // Use the notated rest first; only release a held note
+                            // early when the next attack needs more preparation.
+                            hold = Math.Min(hold, (next.Start - note.Start) * 1000 / speed - preparation);
+                        }
+                    }
+                    double end = pressedAt + Math.Max(45, hold);
                     while (true)
                     {
                         WaitResult result = WaitUntil(generation, end, version);
@@ -371,6 +385,7 @@ namespace HarmonicaStudio
             {
                 string message;
                 bool paused, reached, released;
+                int waitMilliseconds = 10;
                 lock (Gate)
                 {
                     if (!CheckSession(generation, out message)) { paused = reached = released = false; }
@@ -378,14 +393,16 @@ namespace HarmonicaStudio
                     {
                         paused = IsPaused;
                         released = watchVersion >= 0 && watchVersion != ReleaseVersion;
-                        reached = !paused && ActiveMilliseconds >= deadline;
+                        reached = !paused && ActiveMilliseconds >= deadline - 0.0000001;
+                        if (!paused && !reached)
+                            waitMilliseconds = (int)Math.Max(1, Math.Min(10, Math.Ceiling(deadline - ActiveMilliseconds - 0.0000001)));
                     }
                 }
                 if (message != null) { Publish(message, generation); return WaitResult.Cancelled; }
                 if (!CurrentThreadSafe(generation)) return WaitResult.Cancelled;
                 if (released) return WaitResult.Released;
                 if (reached) return WaitResult.Reached;
-                Clock.Wait(10);
+                Clock.Wait(waitMilliseconds);
             }
         }
 

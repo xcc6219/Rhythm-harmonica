@@ -16,6 +16,9 @@ namespace HarmonicaStudio.Tests
             Check(AutoPlayer.NativeInputSize == (IntPtr.Size == 8 ? 40 : 28), "Windows INPUT 结构尺寸");
             WindowClassification();
             DenseTimingAndCleanup();
+            RepeatedOnsetsKeepScoreTiming();
+            ModifierChangesKeepScoreTiming();
+            RestsAndNaturalChangesKeepNoteLengths();
             ForegroundLoss();
             MouseModifierForegroundLoss();
             PauseAndResume();
@@ -117,6 +120,94 @@ namespace HarmonicaStudio.Tests
                 Check(input.HeldCount == 0, "正常结束释放全部输入");
                 Check(Math.Abs(player.Position - 0.04) < 0.000001, "结束后位置为谱面时长");
                 foreach (Record record in keyDown) Check(record.Window == 1, "音键只发送给绑定前台窗口");
+            }
+        }
+
+        private static void RepeatedOnsetsKeepScoreTiming()
+        {
+            foreach (double speed in new[] { 0.5, 1.0, 1.5 })
+            {
+                VirtualClock clock = new VirtualClock();
+                FakeInput input = new FakeInput(clock);
+                var notes = new List<NoteEvent>();
+                for (int i = 0; i < 10; i++) notes.Add(Note(60, i * 0.3, 0.3));
+                using (AutoPlayer player = new AutoPlayer(input, clock))
+                {
+                    player.Start(notes, speed, 60, 0);
+                    Await(delegate { return !player.Running; }, "连续同音按原谱节奏完成", 20000);
+                    List<Record> downs = Filter(input.Snapshot(), false, true), ups = Filter(input.Snapshot(), false, false);
+                    Check(downs.Count == 10 && ups.Count == 10, "连续同音保留全部十次起音");
+                    for (int i = 0; i < downs.Count; i++)
+                    {
+                        double expected = notes[i].Start * 1000 / speed;
+                        Check(Math.Abs(downs[i].Time - downs[0].Time - expected) <= 1,
+                            "连续同音不累计重触延迟：第" + (i + 1) + "音应在" + expected + "ms，实际" + (downs[i].Time - downs[0].Time) + "ms");
+                        Check(ups[i].Time - downs[i].Time >= 45, "连续同音仍满足最短按键时长");
+                        if (i > 0) Check(downs[i].Time - ups[i - 1].Time >= 20, "每次同音仍有至少20ms松键间隔");
+                        Check(notes[i].Start == i * 0.3 && notes[i].Duration == 0.3, "换指时序不能回写源谱时刻或音长");
+                    }
+                    Check(Math.Abs(ups[9].Time - downs[0].Time - 3000 / speed) <= 1 && input.HeldCount == 0,
+                        "末音保留完整音长，实际结束时间不因十次同音逐次拖长");
+                }
+            }
+        }
+
+        private static void ModifierChangesKeepScoreTiming()
+        {
+            // Add/remove semitone and octave modifiers, including a simultaneous
+            // same-key retrigger: the required gaps overlap rather than add up.
+            int[] pitches = { 60, 61, 49, 61, 60, 72, 84, 72, 60 };
+            VirtualClock clock = new VirtualClock();
+            FakeInput input = new FakeInput(clock);
+            var notes = new List<NoteEvent>();
+            for (int i = 0; i < pitches.Length; i++) notes.Add(Note(pitches[i], i * 0.2, 0.2));
+            using (AutoPlayer player = new AutoPlayer(input, clock))
+            {
+                player.Start(notes, 1, 60, 0);
+                Await(delegate { return !player.Running; }, "半音与八度切换按谱完成", 10000);
+                List<Record> events = input.Snapshot();
+                List<Record> downs = Filter(events, false, true), ups = Filter(events, false, false);
+                Check(downs.Count == pitches.Length && ups.Count == pitches.Length, "切换修饰键不丢失音符");
+                for (int i = 0; i < downs.Count; i++)
+                {
+                    Check(Math.Abs(downs[i].Time - downs[0].Time - i * 200) <= 1,
+                        "连续换修饰键不累计准备延迟：第" + (i + 1) + "音实际" + (downs[i].Time - downs[0].Time) + "ms");
+                    Check(ups[i].Time - downs[i].Time >= 45, "换修饰键仍满足最短按键时长");
+                    if (i == 0) continue;
+                    foreach (Record action in events)
+                        if (action.Mouse && action.Time >= ups[i - 1].Time && action.Time < downs[i].Time)
+                            Check(downs[i].Time - action.Time >= 35, "修饰键按下或释放均至少提前35ms");
+                    if (downs[i].Key == downs[i - 1].Key)
+                        Check(downs[i].Time - ups[i - 1].Time >= 20, "同键跨音区仍保留20ms重触间隔");
+                }
+                Check(ups[ups.Count - 1].Time - downs[0].Time == 1800 && input.HeldCount == 0,
+                    "多次换修饰键后末音和实际结束时间仍与谱面对齐");
+            }
+        }
+
+        private static void RestsAndNaturalChangesKeepNoteLengths()
+        {
+            // first pitch, next pitch, next start (ms), expected first key-up (ms)
+            int[][] cases = {
+                new[] { 60, 62, 200, 200 }, new[] { 61, 61, 240, 200 },
+                new[] { 61, 49, 300, 200 }, new[] { 60, 61, 220, 185 },
+                new[] { 60, 61, 235, 200 }, new[] { 61, 61, 210, 190 }
+            };
+            foreach (int[] item in cases)
+            {
+                VirtualClock clock = new VirtualClock();
+                FakeInput input = new FakeInput(clock);
+                using (AutoPlayer player = new AutoPlayer(input, clock))
+                {
+                    player.Start(new[] { Note(item[0], 0, 0.2), Note(item[1], item[2] / 1000.0, 0.2) }, 1, 60, 0);
+                    Await(delegate { return !player.Running; }, "自然换音与真实休止完成");
+                    List<Record> downs = Filter(input.Snapshot(), false, true), ups = Filter(input.Snapshot(), false, false);
+                    Check(downs.Count == 2 && ups.Count == 2, "真实休止前后各保留一次起音");
+                    Check(Math.Abs(downs[1].Time - downs[0].Time - item[2]) <= 1, "休止后的音符不被额外延后");
+                    Check(Math.Abs(ups[0].Time - downs[0].Time - item[3]) <= 1,
+                        "已有休止优先用于换指；无需准备时保留完整音长，需要时只缩短不足部分");
+                    Check(ups[1].Time - downs[1].Time == 200 && input.HeldCount == 0, "最后一个音不额外截短并释放全部输入");
+                }
             }
         }
 

@@ -893,7 +893,11 @@ namespace HarmonicaStudio
         }
         private void StartAudio()
         {
-            try { audio.Play(notes, Position, settings.Speed, Duration); }
+            try
+            {
+                PlaybackPlan output = PlaybackPlan.PreparePlayableOutput(notes, Duration, settings.BasePitch);
+                audio.Play(output.Notes, Position, settings.Speed, output.Duration);
+            }
             catch (Exception ex) { listening = false; SetStatus("试听失败：" + ex.Message, true); }
         }
         private void StopPlayback()
@@ -1521,14 +1525,23 @@ namespace HarmonicaStudio
                 if (picker.ShowDialog(this) != DialogResult.OK) return;
                 try
                 {
-                    var exported = notes.Select(n => new NoteEvent { Pitch = n.Pitch, Velocity = Math.Max(1, n.Velocity), Start = n.Start / settings.Speed, Duration = n.Duration / settings.Speed }).ToList();
-                    MidiWriter.Save(picker.FileName, exported, selected == null ? "口琴旋律" : selected.Title, Duration / settings.Speed);
+                    SaveCurrentMidi(picker.FileName);
                     SetStatus("已导出真实 MIDI：" + Path.GetFileName(picker.FileName), false);
                 }
                 catch (Exception ex) { MessageBox.Show(this, ex.Message, "MIDI 导出失败", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
                 }
             }
             finally { EndPlaybackOperation(); }
+        }
+        private void SaveCurrentMidi(string path)
+        {
+            PlaybackPlan output = PlaybackPlan.PreparePlayableOutput(notes, Duration, settings.BasePitch);
+            foreach (NoteEvent note in output.Notes)
+            {
+                note.Start /= settings.Speed;
+                note.Duration /= settings.Speed;
+            }
+            MidiWriter.Save(path, output.Notes, selected == null ? "口琴旋律" : selected.Title, output.Duration / settings.Speed);
         }
         private SongEntry ImportMidiForSong(string title, string artist)
         {
