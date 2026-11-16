@@ -13,6 +13,7 @@ namespace HarmonicaStudio.Tests
         {
             checks = 0;
             ClipAndLoop();
+            ExactCycleDoesNotCreatePhantomTail();
             RestsAndTempo();
             PlayableOutputKeepsScoreTime();
             BackgroundSynchronization();
@@ -51,6 +52,20 @@ namespace HarmonicaStudio.Tests
             Near(repeatedHold.Notes[2].Duration, 1, "不把末次长音拖过目标终点");
             PlaybackPlan edges = PlaybackPlan.Build(new[] { N(60, 0, 2), N(62, 2, 1), N(64, 5, 1) }, null, 2, 5, 0, false, 1);
             Check(edges.Notes.Count == 1 && edges.Notes[0].Pitch == 62, "开始之前已结束及恰在结束开始的音不进入片段");
+        }
+
+        private static void ExactCycleDoesNotCreatePhantomTail()
+        {
+            NoteEvent[] source = { N(60, 0, .36), N(60, .36, .30) };
+            double end = source[1].Start + source[1].Duration;
+            PlaybackPlan exact = PlaybackPlan.Build(source, null, .12, end, 1.62, true, 1);
+            Check(exact.Notes.Count == 6, "三轮循环在浮点边界处不能生成第七个伪尾音");
+            Check(exact.Notes.All(n => n.Duration > .01), "精确循环只含真实音符，不出现机器精度的假截尾");
+            Near(exact.Duration, 1.62, "修复伪尾音不改变用户指定的总时长");
+            PlaybackPlan partial = PlaybackPlan.Build(source, null, .12, end, 1.62001, true, 1);
+            Check(partial.Notes.Count == 7 && partial.Notes[6].Duration > .000009,
+                "真实的短截尾必须保留给后续编配判定，不能以宽泛容差静默删除");
+            Near(source[0].Duration, .36, "循环边界处理不改源音符");
         }
 
         private static void RestsAndTempo()

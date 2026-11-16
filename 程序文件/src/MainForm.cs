@@ -107,7 +107,7 @@ namespace HarmonicaStudio
         private SoftButton playButton, listenButton, compactPlayButton, sizeButton;
         private SoftButton deleteSongButton;
         private ContextMenuStrip songLibraryMenu;
-        private CheckBox trimTailCheck, adaptPitchCheck;
+        private CheckBox trimTailCheck, adaptPitchCheck, simplifyOrnamentsCheck;
         private double resizeAspect;
         private string tailMessage = "";
         private readonly AutoPlaybackWindowGuard autoWindowGuard;
@@ -121,6 +121,9 @@ namespace HarmonicaStudio
         private bool playing, listening, loading, compact;
         private double offset;
         private double noteDuration;
+        private double effectiveSpeed = 1;
+        private string arrangementError;
+        private string arrangementMessage = "";
         private double sourceDuration, rangeStart, rangeEnd, targetSeconds;
         private bool repeatRange;
         private Point dragStart;
@@ -192,6 +195,7 @@ namespace HarmonicaStudio
             libraryStore = new SongLibraryStore(dataDirectory);
             settingsPath = Path.Combine(dataDirectory, "settings.json");
             settings = AppSettings.Load(settingsPath);
+            effectiveSpeed = settings.Speed;
             // The game's keyboard register is fixed. Adapt the song instead of
             // asking the user to change the meaning of the game's note keys.
             settings.BasePitch = 60;
@@ -514,11 +518,8 @@ namespace HarmonicaStudio
             main.Controls.Add(LabelAt("音域根据旋律自动适配", 249, 139, 185, 27, 8, Theme.Muted));
             speedInput.ValueChanged += delegate
             {
-                if (autoActive) StopPlayback();
-                double position = Position; offset = position; playbackClock.Restart();
                 settings.Speed = (double)speedInput.Value;
-                if (targetSeconds > 0) RebuildNotes();
-                else if (listening && playing) StartAudio();
+                RebuildNotes();
                 SaveSettings();
             };
             transposeInput.ValueChanged += delegate { settings.Transpose = (int)transposeInput.Value; RebuildNotes(); SaveSettings(); };
@@ -537,11 +538,14 @@ namespace HarmonicaStudio
             main.Controls.Add(ButtonAt("片段时长", 605, 97, 96, false, ConfigurePlaybackRange));
             trimTailCheck = new CheckBox { Text = "自动略过无效尾音", Location = new Point(0, 217), Size = new Size(228, 25), Font = Theme.PixelFont(9), Checked = settings.TrimInvalidTail };
             adaptPitchCheck = new CheckBox { Text = "适配附近音／八度", Location = new Point(246, 217), Size = new Size(228, 25), Font = Theme.PixelFont(9), Checked = settings.AdaptNearbyPitch };
+            simplifyOrnamentsCheck = new CheckBox { Text = "流畅优先", Location = new Point(492, 217), Size = new Size(120, 25), Font = Theme.PixelFont(9), Checked = settings.SimplifyOrnaments };
             trimTailCheck.CheckedChanged += delegate { settings.TrimInvalidTail = trimTailCheck.Checked; RebuildNotes(); SaveSettings(); };
             adaptPitchCheck.CheckedChanged += delegate { settings.AdaptNearbyPitch = adaptPitchCheck.Checked; RebuildNotes(); SaveSettings(); };
+            simplifyOrnamentsCheck.CheckedChanged += delegate { settings.SimplifyOrnaments = simplifyOrnamentsCheck.Checked; RebuildNotes(); SaveSettings(); };
             sourceTip.SetToolTip(trimTailCheck, "完整播放时略过超音域尾音和少量疑似弱噪声；手动片段及指定循环时长优先，原文件不改。关闭可恢复原尾部。");
-            sourceTip.SetToolTip(adaptPitchCheck, "只对超音域音符尝试一次八度调整或最多两半音邻近音，保留原文件。");
-            main.Controls.AddRange(new Control[] { trimTailCheck, adaptPitchCheck });
+            sourceTip.SetToolTip(adaptPitchCheck, "先按整曲八度适配，再处理音域边缘最多两半音；手动移调非零时不自动把整曲移回。保留原文件。");
+            sourceTip.SetToolTip(simplifyOrnamentsCheck, "仅在换指困难时省略短弱邻音装饰，保留主旋律；关闭则保留装饰并必要时降速。原文件不改。");
+            main.Controls.AddRange(new Control[] { trimTailCheck, adaptPitchCheck, simplifyOrnamentsCheck });
             var export = ButtonAt("导出 MIDI", mainWidth - 284, 0, 132, false, ExportMidi);
             export.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             main.Controls.Add(export);
@@ -603,6 +607,7 @@ namespace HarmonicaStudio
             {
                 StopPlayback();
                 selected = null; score = null; notes = new List<NoteEvent>(); noteDuration = sourceDuration = 0;
+                arrangementError = null; arrangementMessage = ""; effectiveSpeed = settings.Speed;
                 rangeStart = rangeEnd = targetSeconds = 0; repeatRange = false; tailMessage = "";
                 tracks.Items.Clear(); tracks.Enabled = false; canvas.Notes = compactCanvas.Notes = notes;
                 canvas.BackgroundTracks = compactCanvas.BackgroundTracks = null;
@@ -724,13 +729,14 @@ namespace HarmonicaStudio
                     ? " 转录质量提示见声轨名称；可能仍有断音或伴奏，请先试听。" : " 可先试听确认。";
                 bool estimated = (entry.SourceEdition ?? "").Contains("自动转录") || score.Tracks.Any(t => (t.Name ?? "").Contains("音频自动转录"));
                 bool uncertain = !MelodyPreparation.IsPrimaryRole((ScoreTrack)tracks.SelectedItem);
-                SetStatus("已载入「" + entry.Title + "」· " + (estimated ? "这是音频旋律估计，可右键查找已有主旋律谱。" : uncertain ? "乐谱未标明主旋律，已选择单音旋律候选，请先试听。" : "已选择主旋律，其他声轨仅在瀑布显示。") + tailMessage + warning,
+                SetStatus("已载入「" + entry.Title + "」· " + (estimated ? "这是音频旋律估计，可右键查找已有主旋律谱。" : uncertain ? "乐谱未标明主旋律，已选择单音旋律候选，请先试听。" : "已选择主旋律，其他声轨仅在瀑布显示。") + " " + arrangementMessage + tailMessage + warning,
                     estimated || uncertain || notes.Count == 0 || warning.Contains("质量提示"));
             }
             catch (Exception ex)
             {
                 loading = true; tracks.Items.Clear(); loading = false;
                 selected = null; score = null; notes = new List<NoteEvent>();
+                arrangementError = null; arrangementMessage = ""; effectiveSpeed = settings.Speed;
                 noteDuration = sourceDuration = rangeStart = rangeEnd = targetSeconds = 0;
                 repeatRange = false; tailMessage = ""; tracks.Enabled = false;
                 canvas.Notes = compactCanvas.Notes = notes;
@@ -747,6 +753,7 @@ namespace HarmonicaStudio
         {
             if (tracks.SelectedItem == null) return false;
             StopPlayback();
+            effectiveSpeed = settings.Speed; arrangementError = null; arrangementMessage = "";
             PreparedMelody prepared;
             bool inferred = selected != null && (selected.SourceEdition ?? "").Contains("Basic Pitch 自动转录") || (((ScoreTrack)tracks.SelectedItem).Name ?? "").Contains("音频自动转录");
             try { prepared = MelodyPreparation.Build((ScoreTrack)tracks.SelectedItem, (int)transposeInput.Value, inferred); notes = prepared.Notes; }
@@ -757,7 +764,8 @@ namespace HarmonicaStudio
                 canvas.BackgroundTracks = compactCanvas.BackgroundTracks = null;
                 detailLabel.Text = "此移调不可用，请调整移调数值";
                 canvas.SongSubtitle = compactCanvas.SongSubtitle = detailLabel.Text;
-                UpdatePlaybackUI(); SetStatus(ex.Message, true); return false;
+                arrangementError = "无法生成口琴编配：" + ex.Message;
+                UpdatePlaybackUI(); SetStatus(arrangementError, true); return false;
             }
             PitchAdaptationResult adapted = PitchAdaptationPolicy.Apply(notes, settings.BasePitch, settings.AdaptNearbyPitch, settings.Transpose == 0);
             notes = adapted.Notes;
@@ -773,31 +781,62 @@ namespace HarmonicaStudio
                 if (display.Index == ((ScoreTrack)tracks.SelectedItem).Index) display.Notes = notes.Select(n => new NoteEvent { Pitch = n.Pitch, Start = n.Start, Duration = n.Duration, Velocity = n.Velocity }).ToList();
             double effectiveEnd = rangeEnd <= 0 ? sourceDuration : Math.Min(rangeEnd, sourceDuration);
             string planError = null;
+            int skippedCount = 0, articulatedCount = 0;
             try
             {
-                PlaybackPlan plan = PlaybackPlan.Build(notes, displayTracks, Math.Min(rangeStart, effectiveEnd), effectiveEnd, targetSeconds, repeatRange, settings.Speed,
-                    new ScoreTailOptions { Enabled = settings.TrimInvalidTail, BasePitch = settings.BasePitch,
-                        IsAudioTranscription = inferred, PreserveExplicitRange = rangeStart > 0 || rangeEnd > 0 || targetSeconds > 0 || repeatRange });
-                notes = plan.Notes; displayTracks = plan.BackgroundTracks; noteDuration = plan.Duration;
-                if (plan.TailDecision != null && plan.TailDecision.Applied) tailMessage = " " + plan.TailDecision.Message;
-                if (plan.TailDecision != null && !plan.TailDecision.HasPlayableNotes)
+                var tailOptions = new ScoreTailOptions { Enabled = settings.TrimInvalidTail, BasePitch = settings.BasePitch,
+                    IsAudioTranscription = inferred, PreserveExplicitRange = rangeStart > 0 || rangeEnd > 0 || targetSeconds > 0 || repeatRange };
+                double start = Math.Min(rangeStart, effectiveEnd);
+                PlaybackPlan cycle = PlaybackPlan.Build(notes, displayTracks, start, effectiveEnd, 0, false, settings.Speed, tailOptions);
+                HarmonicaOrnamentResult ornaments = HarmonicaOrnaments.Simplify(cycle.Notes, settings.BasePitch, settings.Speed, settings.SimplifyOrnaments);
+                double candidateSpeed = settings.Speed;
+                bool mayRepeat = repeatRange && targetSeconds > 0;
+                // The analyzed speed may make a longer wall-time request fit
+                // one pass. Only the final plan validates that real request.
+                double analysisTarget = !mayRepeat && targetSeconds > 0
+                    ? Math.Min(targetSeconds, cycle.Duration / candidateSpeed) : targetSeconds;
+                PlaybackPlan candidate = PlaybackPlan.Build(ornaments.Notes, cycle.BackgroundTracks, 0, cycle.Duration, analysisTarget, mayRepeat, candidateSpeed);
+                HarmonicaTimingAnalysis timing = AnalyzeCandidateTiming(candidate, ornaments.Notes, candidateSpeed);
+                if (mayRepeat && candidate.Duration > cycle.Duration)
                 {
-                    // Keep the source track available for a different transpose,
-                    // but never run a silent timeline as if notes were being played.
-                    notes = new List<NoteEvent>(); noteDuration = 0;
-                    tailMessage = " 当前旋律没有可吹奏的音符，请查找主旋律谱或调整移调。";
+                    double singlePassSpeed = cycle.Duration / targetSeconds;
+                    // A slower single pass may fill the requested wall time
+                    // without playing a seam. Do not reject that valid plan.
+                    if (singlePassSpeed >= .5 && (!timing.CanPerform || timing.EffectiveSpeed < singlePassSpeed))
+                    {
+                        PlaybackPlan single = PlaybackPlan.Build(ornaments.Notes, cycle.BackgroundTracks, 0, cycle.Duration, targetSeconds, false, singlePassSpeed);
+                        HarmonicaTimingAnalysis singleTiming = AnalyzeCandidateTiming(single, ornaments.Notes, singlePassSpeed);
+                        if (singleTiming.CanPerform && (!timing.CanPerform || singleTiming.EffectiveSpeed > timing.EffectiveSpeed))
+                            timing = singleTiming;
+                    }
                 }
+                if (!timing.CanPerform) throw new InvalidOperationException(timing.Message);
+                effectiveSpeed = timing.EffectiveSpeed;
+                PlaybackPlan plan = PlaybackPlan.Build(ornaments.Notes, cycle.BackgroundTracks, 0, cycle.Duration, targetSeconds, mayRepeat, EffectiveSpeed);
+                HarmonicaArrangedPlan arranged = HarmonicaArrangement.Prepare(plan, settings.BasePitch, EffectiveSpeed);
+                notes = arranged.Notes; displayTracks = plan.BackgroundTracks; noteDuration = arranged.Duration;
+                skippedCount = arranged.SkippedCount; articulatedCount = arranged.ArticulatedCount;
+                foreach (ScoreTrack display in displayTracks)
+                    if (display.Index == ((ScoreTrack)tracks.SelectedItem).Index) display.Notes = notes;
+                if (cycle.TailDecision != null && cycle.TailDecision.Applied) tailMessage = " " + cycle.TailDecision.Message;
+                if (notes.Count == 0) throw new InvalidOperationException("当前旋律没有可吹奏的音符，请查找主旋律谱或调整移调。");
+                arrangementMessage = "口琴速度 " + EffectiveSpeed.ToString("0.###", CultureInfo.InvariantCulture) + " 倍" +
+                    (EffectiveSpeed < settings.Speed - .0000001 ? "（请求 " + settings.Speed.ToString("0.##", CultureInfo.InvariantCulture) + " 倍）" : "") +
+                    " · " + articulatedCount + " 音预留换指" + (skippedCount > 0 ? " · " + skippedCount + " 个超域音保留为休止" : "") +
+                    (ornaments.RemovedCount > 0 ? " · 片段内简化 " + ornaments.RemovedCount + " 个装饰音候选" + (repeatRange ? "（每轮）" : "") : "");
             }
             catch (Exception ex)
             {
                 notes = new List<NoteEvent>(); displayTracks.Clear(); noteDuration = 0;
-                planError = "片段设置不可用：" + ex.Message + "，请重新设置时长。";
+                planError = arrangementError = "无法生成口琴编配：" + ex.Message + " 请更换旋律、调整速度或片段时长。";
             }
             canvas.Notes = compactCanvas.Notes = notes;
             canvas.BackgroundTracks = compactCanvas.BackgroundTracks = displayTracks;
             canvas.SelectedTrackIndex = compactCanvas.SelectedTrackIndex = ((ScoreTrack)tracks.SelectedItem).Index;
             int outside = notes.Count(n => !HarmonicaMap.Map(n.Pitch, settings.BasePitch).Playable);
-            detailLabel.Text = notes.Count + " 个音符  ·  " + FormatTime(Duration / settings.Speed) + "  ·  " + score.Tracks.Count + " 个声轨" + (targetSeconds > 0 ? "  ·  自定时长" : rangeEnd > 0 ? "  ·  片段" : "") + (outside > 0 ? "  ·  " + outside + " 个超出音域" : "");
+            detailLabel.Text = notes.Count + " 个音符  ·  " + FormatTime(Duration / EffectiveSpeed) + "  ·  " + score.Tracks.Count + " 个声轨" + (targetSeconds > 0 ? "  ·  自定时长" : rangeEnd > 0 ? "  ·  片段" : "") + (outside > 0 ? "  ·  " + outside + " 个超出音域" : "");
+            if (planError == null) detailLabel.Text += "  ·  " + arrangementMessage;
+            else detailLabel.Text = "口琴编配不可用 · 请调整速度或片段";
             if (adapted.WholeSongShift != 0) detailLabel.Text += "  ·  自动移调 " + (adapted.WholeSongShift > 0 ? "+" : "") + adapted.WholeSongShift;
             if (adapted.AdaptedCount > 0) detailLabel.Text += "  ·  " + adapted.AdaptedCount + " 个邻音适配";
             if (settings.Transpose != 0) detailLabel.Text += "  ·  手动移调 " + (settings.Transpose > 0 ? "+" : "") + settings.Transpose;
@@ -807,14 +846,42 @@ namespace HarmonicaStudio
                 ? "  ·  " + selected.Bpm.ToString("0.#", CultureInfo.InvariantCulture) + " BPM" : "";
             string role = MelodyPreparation.IsPrimaryRole((ScoreTrack)tracks.SelectedItem) ? "主旋律" : inferred ? "旋律估计" : "旋律候选";
             canvas.SongSubtitle = compactCanvas.SongSubtitle = role + " · " + ((ScoreTrack)tracks.SelectedItem).Name + "  ·  " + detailLabel.Text + tempo;
-            if (outside > 0) SetStatus("有 " + outside + " 个音仍无法适配口琴音域，将略过；可更换旋律声轨或调整移调。", true);
-            else if (tailMessage.Length > 0) SetStatus(tailMessage.Trim(), notes.Count == 0);
+            if (planError == null) SetStatus(arrangementMessage + tailMessage, skippedCount > 0);
             UpdatePlaybackUI();
             if (planError != null) SetStatus(planError, true);
             return planError == null;
         }
         private double Duration { get { return noteDuration; } }
-        private double Position { get { return Math.Min(Duration, autoActive ? autoPlayer.Position : offset + (playing ? playbackClock.Elapsed.TotalSeconds * settings.Speed : 0)); } }
+        private HarmonicaTimingAnalysis AnalyzeCandidateTiming(PlaybackPlan candidate, IList<NoteEvent> cycle, double speed)
+        {
+            IList<NoteEvent> analysisNotes = candidate.Notes;
+            double analysisDuration = candidate.Duration;
+            if (targetSeconds > 0 && candidate.Notes.Count > 0 && cycle.Count > 0)
+            {
+                int last = candidate.Notes.Count - 1;
+                NoteEvent note = candidate.Notes[last], original = cycle[last % cycle.Count];
+                double duration = Math.Min(original.Duration, ScoreIO.MaximumDurationSeconds - note.Start);
+                if (note.Duration < duration)
+                {
+                    // Only notes whose onsets enter the target constrain speed.
+                    // Analyze the last note's source gate, not an artificial cut:
+                    // Prepare must reject a short final cut instead of slowing
+                    // the clock until that note falls outside the target.
+                    analysisNotes = new List<NoteEvent>(candidate.Notes);
+                    analysisNotes[last] = new NoteEvent { Pitch = note.Pitch, Start = note.Start, Duration = duration, Velocity = note.Velocity };
+                    analysisDuration = Math.Max(analysisDuration, note.Start + duration);
+                }
+            }
+            return HarmonicaArrangement.Analyze(analysisNotes, analysisDuration, false, settings.BasePitch, speed);
+        }
+        private double EffectiveSpeed { get { return effectiveSpeed; } }
+        private double Position { get { return Math.Min(Duration, autoActive ? autoPlayer.Position : offset + (playing ? playbackClock.Elapsed.TotalSeconds * EffectiveSpeed : 0)); } }
+        private bool CanPlayArrangement()
+        {
+            if (!String.IsNullOrEmpty(arrangementError)) { SetStatus(arrangementError, true); return false; }
+            if (notes.Count == 0) { SetStatus("请先选择有音符的乐谱。", true); return false; }
+            return true;
+        }
         private static string FormatTime(double seconds)
         {
             var time = TimeSpan.FromSeconds(Math.Max(0, seconds));
@@ -822,7 +889,7 @@ namespace HarmonicaStudio
         }
         private void TogglePlayback()
         {
-            if (notes.Count == 0) { SetStatus("请先选择有音符的乐谱。", true); return; }
+            if (!CanPlayArrangement()) return;
             if (listening) { ToggleManualPlayback(); return; }
             if (autoActive)
             {
@@ -861,6 +928,7 @@ namespace HarmonicaStudio
         }
         private void StartAutomatic()
         {
+            if (!CanPlayArrangement()) return;
             if (!stopHotkeyAvailable)
             {
                 SetStatus("停止热键 " + settings.StopHotkey + " 不可用，请先在热键设置中更换。", true); return;
@@ -872,7 +940,7 @@ namespace HarmonicaStudio
                 string guardFailure;
                 if (!autoWindowGuard.TrySetEnabled(true, out guardFailure)) throw new InvalidOperationException(guardFailure);
                 WritePlaybackDiagnostic("start", "自动吹奏 · 倒计时 " + settings.CountdownSeconds + " 秒 · " + WindowsInputAccess.OwnDescription());
-                autoPlayer.Start(notes, settings.Speed, settings.BasePitch, settings.CountdownSeconds, Duration);
+                autoPlayer.Start(notes, EffectiveSpeed, settings.BasePitch, settings.CountdownSeconds, Duration);
                 SetStatus("倒计时 " + settings.CountdownSeconds + " 秒：切回游戏、装备口琴，保持游戏在前台。", true);
                 UpdatePlaybackUI();
             }
@@ -880,7 +948,7 @@ namespace HarmonicaStudio
         }
         private void ToggleListen()
         {
-            if (notes.Count == 0) { SetStatus("请先选择有音符的乐谱。", true); return; }
+            if (!CanPlayArrangement()) return;
             if (autoActive) StopPlayback();
             if (listening) { listening = false; audio.Stop(); }
             else
@@ -893,10 +961,11 @@ namespace HarmonicaStudio
         }
         private void StartAudio()
         {
+            if (!CanPlayArrangement()) return;
             try
             {
                 PlaybackPlan output = PlaybackPlan.PreparePlayableOutput(notes, Duration, settings.BasePitch);
-                audio.Play(output.Notes, Position, settings.Speed, output.Duration);
+                audio.Play(output.Notes, Position, EffectiveSpeed, output.Duration);
             }
             catch (Exception ex) { listening = false; SetStatus("试听失败：" + ex.Message, true); }
         }
@@ -945,11 +1014,12 @@ namespace HarmonicaStudio
             }
             canvas.TimelineDuration = compactCanvas.TimelineDuration = Duration;
             canvas.Position = compactCanvas.Position = Position;
+            canvas.PlaybackSpeed = compactCanvas.PlaybackSpeed = EffectiveSpeed;
             canvas.Automatic = compactCanvas.Automatic = settings.AutoMode && !listening;
             if (Visible && WindowState != FormWindowState.Minimized)
                 (compact ? compactCanvas : canvas).Invalidate();
             if (selected != null) compactTitle.Text = selected.Title + " · " + (listening ? "试听" : settings.AutoMode ? "自动" : "跟谱");
-            timeLabel.Text = FormatTime(Position / settings.Speed) + " / " + FormatTime(Duration / settings.Speed);
+            timeLabel.Text = FormatTime(Position / EffectiveSpeed) + " / " + FormatTime(Duration / EffectiveSpeed);
             string action = listening ? "试听" : settings.AutoMode ? "吹奏" : "跟谱";
             bool resumable = (autoActive && autoPlayer.Paused) || (offset > 0 && offset < Duration);
             playButton.Text = playing ? "Ⅱ 暂停" + action : "▶ " + (resumable ? "继续" : "开始") + action;
@@ -1513,7 +1583,7 @@ namespace HarmonicaStudio
         }
         private void ExportMidi()
         {
-            if (notes.Count == 0) { SetStatus("请先选择有音符的乐谱。", true); return; }
+            if (!CanPlayArrangement()) return;
             StopPlayback();
             string fileTitle = selected == null ? "旋律" : selected.Title;
             foreach (char invalid in Path.GetInvalidFileNameChars()) fileTitle = fileTitle.Replace(invalid, '_');
@@ -1535,13 +1605,15 @@ namespace HarmonicaStudio
         }
         private void SaveCurrentMidi(string path)
         {
+            if (!String.IsNullOrEmpty(arrangementError)) throw new InvalidOperationException(arrangementError);
+            if (notes.Count == 0) throw new InvalidOperationException("请先选择有音符的乐谱。");
             PlaybackPlan output = PlaybackPlan.PreparePlayableOutput(notes, Duration, settings.BasePitch);
             foreach (NoteEvent note in output.Notes)
             {
-                note.Start /= settings.Speed;
-                note.Duration /= settings.Speed;
+                note.Start /= EffectiveSpeed;
+                note.Duration /= EffectiveSpeed;
             }
-            MidiWriter.Save(path, output.Notes, selected == null ? "口琴旋律" : selected.Title, output.Duration / settings.Speed);
+            MidiWriter.SaveHarmonica(path, output.Notes, selected == null ? "口琴旋律" : selected.Title, output.Duration / EffectiveSpeed);
         }
         private SongEntry ImportMidiForSong(string title, string artist)
         {
@@ -1664,13 +1736,13 @@ namespace HarmonicaStudio
             BeginPlaybackOperation();
             try
             {
-                using (var dialog = new PlaybackRangeDialog(sourceDuration, rangeStart, rangeEnd, targetSeconds, repeatRange, settings.Speed))
+                using (var dialog = new PlaybackRangeDialog(sourceDuration, rangeStart, rangeEnd, targetSeconds, repeatRange, EffectiveSpeed))
                 {
                     if (dialog.ShowDialog(this) != DialogResult.OK) return;
                     rangeStart = dialog.StartSeconds; rangeEnd = dialog.EndSeconds;
                     targetSeconds = dialog.TargetSeconds; repeatRange = dialog.Repeat;
                     RebuildNotes();
-                    if (notes.Count > 0) SetStatus("播放时长已应用：" + FormatTime(Duration / settings.Speed) + (repeatRange && targetSeconds > 0 ? " · 循环片段" : ""), false);
+                    if (notes.Count > 0) SetStatus("播放时长已应用：" + FormatTime(Duration / EffectiveSpeed) + (repeatRange && targetSeconds > 0 ? " · 循环片段" : "") + " · " + arrangementMessage, false);
                 }
             }
             finally { EndPlaybackOperation(); }

@@ -30,7 +30,7 @@ public static class AllTests
             if (EngineTests.Main() != 0 || MidiWriterTests.Main() != 0) return 1;
             bool withoutForeground = args.Length == 1 && args[0] == "--without-foreground";
             if (withoutForeground) Console.WriteLine("本次明确排除需要真实前台的热键与鼠标穿透断言；不能代替完整原生交互验证。");
-            SettingsAudioTests.Run(); PlaybackPlanTests.Run(); MusicPreparationTests.Run();
+            SettingsAudioTests.Run(); PlaybackPlanTests.Run(); HarmonicaArrangementTests.Run(); HarmonicaOrnamentTests.Run(); MusicPreparationTests.Run();
             if (!withoutForeground) HotkeyBindingTests.Run();
             RegisteredHotkeyControllerTests.Run(); RuntimeControlTests.Run(); QqMusicCatalogTests.Run(); MusicAudioSourcesTests.Run(); SongAudioDownloadTests.Run();
             Console.WriteLine("模拟后端自动演奏测试通过，共 " + AutoPlayerTests.Run(!withoutForeground) + " 项断言。");

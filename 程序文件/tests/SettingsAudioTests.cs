@@ -15,6 +15,7 @@ public static class SettingsAudioTests
     {
         checks = 0;
         TestSettings();
+        TestOrnamentPreference();
         TestWaveFormat();
         TestTempoAndPosition();
         TestCancellation();
@@ -134,6 +135,28 @@ public static class SettingsAudioTests
             wave.Length == 32044, "一秒试听应为 16 kHz、16-bit、单声道且长度一致。");
         Assert(Peak(wave, 0.05, 0.20) > 1000 && Sample(wave, 0) == 0 &&
             Math.Abs(Sample(wave, 15999)) < 100, "音频应有实际信号，起止包络应避免突变。");
+    }
+
+    private static void TestOrnamentPreference()
+    {
+        string directory = Path.Combine(Path.GetTempPath(), "HarmonicaOrnamentSettings-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        string path = Path.Combine(directory, "settings.json");
+        try
+        {
+            File.WriteAllText(path, "{\"Speed\":1.25}", new UTF8Encoding(false));
+            AppSettings legacy = AppSettings.Load(path);
+            legacy.Save(path);
+            Assert(File.ReadAllText(path).Contains("\"SimplifyOrnaments\":true"), "旧配置缺少流畅优先字段时应默认开启并正确保存。");
+            File.WriteAllText(path, "{\"Speed\":1.25,\"SimplifyOrnaments\":false}", new UTF8Encoding(false));
+            AppSettings disabled = AppSettings.Load(path);
+            disabled.Save(path);
+            Assert(File.ReadAllText(path).Contains("\"SimplifyOrnaments\":false") && disabled.Speed == 1.25,
+                "用户明确关闭流畅优先应保存恢复，不能覆盖请求速度。");
+            new AppSettings().Save(path);
+            Assert(File.ReadAllText(path).Contains("\"SimplifyOrnaments\":true"), "新配置默认以旋律流畅优先。");
+        }
+        finally { if (File.Exists(path)) File.Delete(path); Directory.Delete(directory); }
     }
 
     private static void TestTempoAndPosition()

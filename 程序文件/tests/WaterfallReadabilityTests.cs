@@ -19,6 +19,8 @@ public static class WaterfallReadabilityTests
         checks = 0;
         foreach (float dpi in new[] { 96f, 144f, 192f })
         {
+            TestEffectiveSpeedCaption(dpi, false);
+            TestEffectiveSpeedCaption(dpi, true);
             TestCurrentAndNextCues(dpi, false);
             TestCurrentAndNextCues(dpi, true);
             TestCurrentMouseLegend(dpi, false);
@@ -102,6 +104,33 @@ public static class WaterfallReadabilityTests
                     }
                 }
             }
+        }
+    }
+
+    private static void TestEffectiveSpeedCaption(float dpi, bool compact)
+    {
+        using (var canvas = NewCanvas(compact, 0))
+        {
+            canvas.Notes = new List<NoteEvent> { Note(60, 0, .3) };
+            using (var normal = Render(canvas, dpi))
+            {
+                canvas.PlaybackSpeed = .75;
+                using (var slower = Render(canvas, dpi))
+                    Assert(ChangedPixels(normal, slower, canvas.ToClient(new RectangleF(990, 8, 194, 29))) > 10,
+                        "完整与迷你谱面必须可见实际编配速度，不能只在隐藏的完整设置区提示降速。");
+            }
+            string caption = (string)Call(canvas, "PlaybackCaption");
+            Assert(caption.Contains("0.75×") && caption.Contains(compact ? "2秒预览" : "4秒预览"),
+                "实际倍率与固定预览时间必须分别说明。");
+            using (var frame = Render(canvas, dpi))
+            using (var graphics = Graphics.FromImage(frame))
+            {
+                float available = (float)typeof(ScoreCanvas).GetField("PlaybackStatusWidth", BindingFlags.Static | BindingFlags.NonPublic).GetRawConstantValue();
+                Assert(graphics.MeasureString(caption, (Font)Field(canvas, "labelFont")).Width <= available - 4,
+                    "实际倍率与预览时间必须完整显示，不能被省略号裁掉。");
+            }
+            canvas.Automatic = true;
+            Assert(((string)Call(canvas, "PlaybackCaption")).StartsWith("自动"), "实际速度提示保留自动演奏状态。");
         }
     }
 

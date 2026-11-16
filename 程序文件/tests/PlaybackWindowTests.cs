@@ -47,6 +47,10 @@ public static class PlaybackWindowTests
             IntPtr unused = form.Handle;
             for (int i = 1; i <= 5; i++) UnregisterHotKey(form.Handle, i);
             PlannedMainForm(form);
+            ArrangementMainForm(form);
+            OrnamentMainForm(form, settingsPath);
+            NaturalPassIgnoresUnusedSeam(form);
+            TargetEndIgnoresUnplayedNotes(form);
             UnplayablePreviewDoesNotConsumeAudioLimit();
             ExportPlayableTimeline(form);
             RangeDialog();
@@ -155,6 +159,160 @@ public static class PlaybackWindowTests
                 "半速窗口总时长最大值不能超出播放计划四小时实际上限");
     }
 
+    private static void ArrangementMainForm(MainForm form)
+    {
+        Set(form, "rangeStart", 0.0); Set(form, "rangeEnd", 0.0); Set(form, "targetSeconds", 0.0); Set(form, "repeatRange", false);
+        Field<NumericUpDown>(form, "speedInput").Value = 1.5m;
+        var source = new ScoreTrack { Name = "MELODY", Index = 7,
+            Notes = new List<NoteEvent> { N(60, 0, .06), N(60, .06, .06), N(61, .12, .12), N(62, .24, .12) } };
+        SetFixture(form, new[] { source });
+        List<NoteEvent> arranged = Field<List<NoteEvent>>(form, "notes");
+        Check(arranged.Count == 4 && arranged[0].Duration < .06,
+            "主窗必须为重复键真实预留收键间隔，瀑布不能继续显示原连奏音长");
+        double effective = Value(form, "EffectiveSpeed");
+        Check(effective >= .5 && effective < 1.5, "密集换指按整个片段统一降速至可奏区间");
+        Near(Field<AppSettings>(form, "settings").Speed, 1.5, "自动降速不能覆盖用户请求速度");
+        Check(Field<NumericUpDown>(form, "speedInput").Value == 1.5m, "用户速度输入仍显示请求值");
+        ScoreCanvas full = Field<ScoreCanvas>(form, "canvas"), mini = Field<ScoreCanvas>(form, "compactCanvas");
+        Check(Object.ReferenceEquals(arranged, full.Notes) && Object.ReferenceEquals(arranged, mini.Notes),
+            "两种瀑布使用统一编配音符");
+        Near(full.PlaybackSpeed, effective, "完整瀑布显示实际口琴速度");
+        Near(mini.PlaybackSpeed, effective, "迷你瀑布也明确显示自动降速后的实际倍率");
+        Check(Object.ReferenceEquals(arranged, full.BackgroundTracks.Single(t => t.Index == 7).Notes),
+            "选中声轨显示快照也替换为已编配音符，不能遗留旧时值");
+        Check(Field<Label>(form, "detailLabel").Text.Contains("口琴速度") && Field<Label>(form, "detailLabel").Text.Contains("换指"),
+            "主窗披露实际口琴速度与调整音数");
+        Near(source.Notes[0].Duration, .06, "口琴编配不修改原始声轨音长");
+        Near(source.Notes[1].Start, .06, "口琴编配不修改原始声轨起音");
+        double naturalDuration = Value(form, "Duration");
+        Field<AudioPreview>(form, "audio").Dispose();
+        Set(form, "noteDuration", 600 * effective + 1);
+        Call(form, "StartAudio");
+        Check(Field<Label>(form, "statusLabel").Text.Contains("10 分钟"),
+            "真实试听调用按实际口琴速度计算时长；准备阶段拒绝过长音频，未访问音频设备");
+        Set(form, "noteDuration", naturalDuration);
+
+        // End at a whole number of analyzed cycles so this case isolates speed
+        // and expansion; a clipped short final note is checked separately below.
+        double requestedSeconds = .36 * 3 / effective;
+        Set(form, "targetSeconds", requestedSeconds); Set(form, "repeatRange", true); Call(form, "RebuildNotes");
+        arranged = Field<List<NoteEvent>>(form, "notes");
+        Near(Value(form, "Duration") / Value(form, "EffectiveSpeed"), requestedSeconds, "循环按实际有效速度保留用户指定墙钟总时长");
+        Check(arranged.Count == 12, "三轮循环保留全部原旋律音而不是逐音删减");
+        Near(arranged[4].Start, .36, "循环接缝仍使用原谱周期");
+        string path = Path.Combine(AppPaths.RootDirectory, "arranged-window-" + Guid.NewGuid().ToString("N") + ".mid");
+        try
+        {
+            Call(form, "SaveCurrentMidi", path);
+            List<NoteEvent> output = ScoreIO.LoadMidi(path).Tracks[0].Notes;
+            Check(output.Count == arranged.Count, "实际导出与瀑布共用同一已编配旋律");
+            for (int i = 0; i < output.Count; i++)
+            {
+                Check(output[i].Pitch == arranged[i].Pitch, "导出口琴编配保留音高");
+                Check(Math.Abs(output[i].Start - arranged[i].Start / effective) <= 1.0 / MidiWriter.TicksPerSecond,
+                    "导出按实际口琴速度换算起音而非用户请求速度");
+                Check(Math.Abs(output[i].Duration - arranged[i].Duration / effective) <= 1.0 / MidiWriter.TicksPerSecond,
+                    "导出保留已预留换指间隔的音长");
+            }
+            Check(Math.Abs(ReadMidiEndSeconds(File.ReadAllBytes(path)) - requestedSeconds) <= 1.0 / MidiWriter.TicksPerSecond,
+                "实际 MIDI 结束事件保留指定墙钟总时长");
+        }
+        finally { if (File.Exists(path)) File.Delete(path); }
+
+        Set(form, "targetSeconds", 0.0); Set(form, "repeatRange", false);
+        Field<NumericUpDown>(form, "speedInput").Value = .5m;
+        Near(Value(form, "EffectiveSpeed"), .5, "没有自定总时长时修改速度也必须重建编配");
+        Check(!Object.ReferenceEquals(arranged, Field<List<NoteEvent>>(form, "notes")), "变速产生新的统一编配快照");
+        Set(form, "rangeStart", .06); Set(form, "rangeEnd", .36); Call(form, "RebuildNotes");
+        Near(Field<double>(form, "rangeStart"), .06, "编配保留用户选择的片段起点");
+        Near(Field<double>(form, "rangeEnd"), .36, "编配保留用户选择的片段终点");
+        Near(Value(form, "Duration"), .30, "片段时长仍以原谱边界为准");
+        Near(Field<List<NoteEvent>>(form, "notes")[0].Start, 0, "已选片段共同从零开始，起音不额外移动");
+        Set(form, "rangeStart", 0.0); Set(form, "rangeEnd", 0.0);
+        Field<NumericUpDown>(form, "speedInput").Value = 1;
+        SetFixture(form, new[] { new ScoreTrack { Name = "MELODY", Index = 3,
+            Notes = new List<NoteEvent> { N(60, 0, .01), N(61, .01, .1) } } });
+        CheckArrangementBlocked(form, "低于最低可奏速度的片段");
+        Check(Field<double>(form, "sourceDuration") > 0 && Field<ComboBox>(form, "tracks").Items.Count > 0,
+            "编配失败仍保留源轨和范围入口，允许重新选轨或选段");
+        SetFixture(form, new[] { new ScoreTrack { Name = "MELODY", Index = 3, Notes = new List<NoteEvent> { N(60, 0, 1) } } });
+        Set(form, "targetSeconds", .01); Call(form, "RebuildNotes");
+        CheckArrangementBlocked(form, "指定终点截出的超短尾音");
+        Near(Field<double>(form, "targetSeconds"), .01, "不能偷偷延长用户指定时长来掩盖短尾音");
+        Set(form, "targetSeconds", 0.0); Call(form, "RebuildNotes");
+        Check(Field<List<NoteEvent>>(form, "notes").Count == 1 && String.IsNullOrEmpty(Field<string>(form, "arrangementError")),
+            "重新选择有效范围后可解除失败状态并恢复统一编配");
+    }
+
+    private static void CheckArrangementBlocked(MainForm form, string reason)
+    {
+        string error = Field<string>(form, "arrangementError");
+        Check(!String.IsNullOrWhiteSpace(error) && Field<List<NoteEvent>>(form, "notes").Count == 0,
+            reason + "必须明确阻止生成可奏输出");
+        foreach (string operation in new[] { "ToggleListen", "StartAutomatic", "StartAudio" })
+        {
+            Call(form, operation);
+            Check(Field<Label>(form, "statusLabel").Text.Contains(error) && !Field<bool>(form, "listening") &&
+                !Field<AutoPlayer>(form, "autoPlayer").Running, reason + "阻止" + operation + "且保留具体原因");
+        }
+        string path = Path.Combine(AppPaths.RootDirectory, "blocked-arrangement-" + Guid.NewGuid().ToString("N") + ".mid");
+        bool rejected = false;
+        try { Call(form, "SaveCurrentMidi", path); }
+        catch (TargetInvocationException ex) { rejected = ex.InnerException != null && ex.InnerException.Message.Contains(error); }
+        Check(rejected && !File.Exists(path), reason + "不能写出假称可奏的 MIDI");
+    }
+
+    private static void OrnamentMainForm(MainForm form, string settingsPath)
+    {
+        Set(form, "rangeStart", 0.0); Set(form, "rangeEnd", 0.0); Set(form, "targetSeconds", 0.0); Set(form, "repeatRange", false);
+        Field<NumericUpDown>(form, "speedInput").Value = 1;
+        var source = new ScoreTrack { Name = "单音旋律候选", Index = 5,
+            Notes = new List<NoteEvent> { N(60, 0, .30), N(61, .30, .06), N(60, .36, .30) } };
+        source.Notes[1].Velocity = 35;
+        SetFixture(form, new[] { source });
+        var notes = Field<List<NoteEvent>>(form, "notes");
+        Check(notes.Count == 2, "默认流畅优先应省去导致换指瓶颈的短弱邻音回返候选");
+        double simplifiedSpeed = Value(form, "EffectiveSpeed");
+        Near(simplifiedSpeed, 1, "简化装饰后可按请求速度演奏主音");
+        CheckBox option = Field<CheckBox>(form, "simplifyOrnamentsCheck");
+        Check(option.Checked && option.Text == "流畅优先", "主窗提供默认开启的流畅优先选项");
+        Check(Field<ToolTip>(form, "sourceTip").GetToolTip(option).Contains("关闭"), "选项说明必须清楚提示关闭后保留装饰并必要时降速");
+        ScoreCanvas full = Field<ScoreCanvas>(form, "canvas"), mini = Field<ScoreCanvas>(form, "compactCanvas");
+        Check(full.SongSubtitle.StartsWith("旋律候选", StringComparison.Ordinal) && mini.SongSubtitle == full.SongSubtitle,
+            "流畅优先不能把候选旋律伪装成确定主旋律");
+        Check(Field<Label>(form, "detailLabel").Text.Contains("简化 1 个装饰音候选") &&
+            Field<Label>(form, "statusLabel").Text.Contains("简化 1 个装饰音候选"), "状态与详情如实披露装饰候选简化数");
+        option.Checked = false;
+        notes = Field<List<NoteEvent>>(form, "notes");
+        Check(notes.Count == 3 && notes[1].Pitch == 61 && Value(form, "EffectiveSpeed") < simplifiedSpeed,
+            "关闭流畅优先恢复同一三音旋律，以统一降速保留装饰");
+        Check(File.ReadAllText(settingsPath).Contains("\"SimplifyOrnaments\":false"), "关闭选项即时保存用户偏好");
+        Near(Field<AppSettings>(form, "settings").Speed, 1, "开关简化不能改写用户请求速度");
+        Check(source.Notes.Count == 3 && source.Notes[1].Pitch == 61 && source.Notes[1].Velocity == 35,
+            "开关简化不删改原始声轨的装饰音或力度");
+        Near(source.Notes[0].Duration, .30, "简化不改写原始前音时长");
+
+        Set(form, "rangeStart", .12); Set(form, "rangeEnd", .66);
+        Set(form, "targetSeconds", 1.62); Set(form, "repeatRange", true);
+        option.Checked = true;
+        notes = Field<List<NoteEvent>>(form, "notes");
+        Check(notes.Count == 6 && notes.All(n => n.Pitch == 60), "片段三次循环必须每轮使用简化后的双主音，不能重新展开未简化源谱；音数=" +
+            notes.Count + "，状态=" + Field<string>(form, "arrangementError"));
+        Near(notes[0].Start, 0, "片段主音裁切后从零开始");
+        Near(notes[1].Start, .24, "省略候选不移动后续主音起点");
+        Near(notes[2].Start, .54, "循环使用原始片段周期而非删音后的末尾长度");
+        Near(Value(form, "Duration") / Value(form, "EffectiveSpeed"), 1.62, "简化及循环仍保留目标实际总秒数");
+        Near(Field<double>(form, "rangeStart"), .12, "流畅优先不改动片段起点设置");
+        Near(Field<double>(form, "rangeEnd"), .66, "流畅优先不改动片段终点设置");
+        Check(Object.ReferenceEquals(notes, full.Notes) && Object.ReferenceEquals(notes, mini.Notes) &&
+            Object.ReferenceEquals(notes, full.BackgroundTracks.Single(t => t.Index == 5).Notes),
+            "两种瀑布与选中声轨共享最终简化编配快照");
+        Check(AppSettings.Load(settingsPath).Speed == 1 && File.ReadAllText(settingsPath).Contains("\"SimplifyOrnaments\":true"),
+            "重新开启选项保存恢复且仍保留请求速度");
+        Set(form, "rangeStart", 0.0); Set(form, "rangeEnd", 0.0); Set(form, "targetSeconds", 0.0); Set(form, "repeatRange", false);
+        Call(form, "RebuildNotes");
+    }
+
     private static void UnplayablePreviewDoesNotConsumeAudioLimit()
     {
         MainForm previewForm = new MainForm(false);
@@ -177,6 +335,68 @@ public static class PlaybackWindowTests
         finally { DisposeForm(previewForm); }
     }
 
+    private static void NaturalPassIgnoresUnusedSeam(MainForm form)
+    {
+        Set(form, "rangeStart", 0.0); Set(form, "rangeEnd", 0.0); Set(form, "targetSeconds", 0.0); Set(form, "repeatRange", true);
+        Field<NumericUpDown>(form, "speedInput").Value = 1.5m;
+        SetFixture(form, new[] { new ScoreTrack { Name = "MELODY", Index = 4, Notes = new List<NoteEvent> { N(60, 0, .10) } } });
+        Near(Value(form, "EffectiveSpeed"), 1.5, "自然一遍即使保留循环勾选，也不能为未播放接缝额外降速");
+        Check(Field<List<NoteEvent>>(form, "notes").Count == 1, "自然一遍仅生成一个原音");
+        Set(form, "targetSeconds", .06); Call(form, "RebuildNotes");
+        Near(Value(form, "EffectiveSpeed"), 1.5, "目标短于一轮时不检查不存在的循环接缝");
+        Near(Value(form, "Duration") / Value(form, "EffectiveSpeed"), .06, "单遍短片段保留指定墙钟时长");
+
+        Set(form, "targetSeconds", 0.0);
+        SetFixture(form, new[] { new ScoreTrack { Name = "MELODY", Index = 4, Notes = new List<NoteEvent> { N(60, 0, .03) } } });
+        Check(Field<List<NoteEvent>>(form, "notes").Count == 1 && Value(form, "EffectiveSpeed") >= .5,
+            "足够持音但不够自循环重触的短音，自然单遍仍可演奏");
+        Set(form, "targetSeconds", .05); Call(form, "RebuildNotes");
+        Check(Field<List<NoteEvent>>(form, "notes").Count == 1 && String.IsNullOrEmpty(Field<string>(form, "arrangementError")),
+            "单遍降速即可填满目标时长时，不能因从未播放的接缝误判不可奏");
+        Near(Value(form, "Duration") / Value(form, "EffectiveSpeed"), .05, "单遍填满目标时长不延长或缩短用户指定终点");
+        Set(form, "targetSeconds", 0.0); Set(form, "repeatRange", false);
+        Field<NumericUpDown>(form, "speedInput").Value = 1;
+    }
+
+    private static void TargetEndIgnoresUnplayedNotes(MainForm form)
+    {
+        Set(form, "rangeStart", 0.0); Set(form, "rangeEnd", 0.0); Set(form, "targetSeconds", 1.0); Set(form, "repeatRange", false);
+        Field<NumericUpDown>(form, "speedInput").Value = 1;
+        SetFixture(form, new[] { new ScoreTrack { Name = "MELODY", Index = 6,
+            Notes = new List<NoteEvent> { N(60, 0, 1), N(62, 2, .01) } } });
+        Check(Field<List<NoteEvent>>(form, "notes").Count == 1 && String.IsNullOrEmpty(Field<string>(form, "arrangementError")),
+            "目标终点之后不会演奏的超短音，不能阻止当前一秒主音编配");
+        Near(Value(form, "EffectiveSpeed"), 1, "未覆盖的尾段不能导致实际片段额外降速");
+        Near(Value(form, "Duration"), 1, "按目标截取后仍保留指定终点");
+        Set(form, "targetSeconds", .5);
+        Field<NumericUpDown>(form, "speedInput").Value = 1.5m;
+        Near(Value(form, "EffectiveSpeed"), 1.5, "目标覆盖范围按候选请求速度换算，未播尾音不限制快放");
+        Near(Value(form, "Duration"), .75, "半秒墙钟目标在1.5倍速对应0.75秒谱面");
+        Set(form, "targetSeconds", 1.5);
+        Field<NumericUpDown>(form, "speedInput").Value = 1;
+        Near(Value(form, "Duration"), 1.5, "目标内主音后的真实休止保留，未播尾音不参与分析");
+
+        SetFixture(form, new[] { new ScoreTrack { Name = "MELODY", Index = 6,
+            Notes = new List<NoteEvent> { N(60, 0, .03), N(62, .03, .97) } } });
+        Check(Field<List<NoteEvent>>(form, "notes").Count == 2 && String.IsNullOrEmpty(Field<string>(form, "arrangementError")),
+            "非循环目标虽超过请求速度下的一遍，仍须允许有效降速后覆盖的合法时长");
+        Near(Value(form, "EffectiveSpeed"), .65, "短主音决定有效速度，候选阶段不提前拒绝合法非循环目标");
+        Near(Value(form, "Duration") / Value(form, "EffectiveSpeed"), 1.5, "降速后的非循环计划精确保留1.5秒目标");
+        Set(form, "targetSeconds", 2.0); Call(form, "RebuildNotes");
+        CheckArrangementBlocked(form, "非循环目标超过有效速度下一遍时长");
+        Near(Field<double>(form, "targetSeconds"), 2, "真正超长的非循环请求不得被候选分析静默截短");
+
+        Set(form, "targetSeconds", .31);
+        SetFixture(form, new[] { new ScoreTrack { Name = "MELODY", Index = 6,
+            Notes = new List<NoteEvent> { N(60, 0, .3), N(61, .3, .3), N(60, .6, .3) } } });
+        CheckArrangementBlocked(form, "目标终点截出的短尾音不是原谱装饰候选");
+        Near(Field<double>(form, "targetSeconds"), .31, "不能把真实截断的短尾音当装饰删除或悄悄移动终点");
+        Set(form, "targetSeconds", .33); Call(form, "RebuildNotes");
+        CheckArrangementBlocked(form, "短尾音不能通过降速移到目标之外而静默消失");
+        Near(Field<double>(form, "targetSeconds"), .33, "可通过减速避开的真实短尾音仍须明确让用户调整终点");
+        Set(form, "targetSeconds", 0.0); Call(form, "RebuildNotes");
+    }
+
     private static void ExportPlayableTimeline(MainForm form)
     {
         string path = Path.Combine(AppPaths.RootDirectory, "playable-output-" + Guid.NewGuid().ToString("N") + ".mid");
@@ -189,6 +409,7 @@ public static class PlaybackWindowTests
             {
                 PlaybackPlan plan = PlaybackPlan.Build(source, null, 0, 3, 7, true, speed);
                 settings.Speed = speed; settings.BasePitch = 60;
+                Set(form, "effectiveSpeed", speed);
                 Set(form, "notes", plan.Notes); Set(form, "noteDuration", plan.Duration);
                 Call(form, "SaveCurrentMidi", path);
                 List<NoteEvent> read = ScoreIO.LoadMidi(path).Tracks[0].Notes;
@@ -215,6 +436,7 @@ public static class PlaybackWindowTests
         finally
         {
             settings.Speed = 1;
+            Set(form, "effectiveSpeed", 1.0);
             if (File.Exists(path)) File.Delete(path);
         }
     }
@@ -233,6 +455,7 @@ public static class PlaybackWindowTests
                 cursor += length;
             }
             else if (status == 0x80 || status == 0x90) cursor += 2;
+            else if (status == 0xc0) cursor++;
             else throw new Exception("导出 MIDI 出现未预期事件。");
         }
         throw new Exception("导出 MIDI 缺少结束事件。");

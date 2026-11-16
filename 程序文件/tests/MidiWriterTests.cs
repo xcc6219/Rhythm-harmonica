@@ -20,6 +20,8 @@ namespace HarmonicaStudio.Tests
                 Limits(folder);
                 ExplicitDuration(folder);
                 AtomicSave(folder);
+                HarmonicaProgramAndTiming(folder);
+                HarmonicaAtomicSave(folder);
                 Console.WriteLine("MIDI 写出测试通过，共 " + Checks + " 项断言。");
                 return 0;
             }
@@ -150,6 +152,107 @@ namespace HarmonicaStudio.Tests
             Check(Convert.ToBase64String(before) == Convert.ToBase64String(File.ReadAllBytes(path)), "无效时长不破坏原文件");
         }
 
+        private static Action<string, IEnumerable<NoteEvent>, string, double> HarmonicaWriter()
+        {
+            var method = typeof(MidiWriter).GetMethod("SaveHarmonica", new[] {
+                typeof(string), typeof(IEnumerable<NoteEvent>), typeof(string), typeof(double) });
+            Check(method != null && method.IsStatic && method.ReturnType == typeof(void), "提供独立的公共口琴 MIDI 导出入口");
+            return (Action<string, IEnumerable<NoteEvent>, string, double>)Delegate.CreateDelegate(
+                typeof(Action<string, IEnumerable<NoteEvent>, string, double>), method);
+        }
+
+        private static void HarmonicaProgramAndTiming(string folder)
+        {
+            var save = HarmonicaWriter();
+            foreach (double leadingRest in new[] { 0.0, 0.5 })
+            {
+                string path = Path.Combine(folder, "口琴音色.mid"), title = "口琴 · 重复音与休止🎵";
+                NoteEvent[] notes = { N(64, leadingRest + 1.25, 0.25, 72),
+                    N(60, leadingRest, 0.5, 90), N(60, leadingRest + 0.5, 0.5, 80) };
+                byte[] generic = MidiWriter.ToBytes(notes, title, 3.5);
+                save(path, notes, title, 3.5);
+                byte[] harmonica = File.ReadAllBytes(path);
+                int programOffset = CheckHarmonicaProgram(harmonica);
+                Check(harmonica.Length == generic.Length + 3 && U32(harmonica, 18) == U32(generic, 18) + 3,
+                    "口琴导出仅增加三字节 program_change，轨道长度同步更新");
+                byte[] withoutProgram = new byte[harmonica.Length - 3];
+                Array.Copy(harmonica, 0, withoutProgram, 0, programOffset);
+                Array.Copy(harmonica, programOffset + 3, withoutProgram, programOffset, harmonica.Length - programOffset - 3);
+                Array.Copy(generic, 18, withoutProgram, 18, 4);
+                Check(Convert.ToBase64String(withoutProgram) == Convert.ToBase64String(generic),
+                    "去掉口琴乐器事件后与通用导出逐字节相同：速度、UTF8标题、事件次序和EOT均不变");
+                Check(ReadEndTick(harmonica) == 3360, "口琴音色事件不移动计划终点或尾部休止");
+                SongScore loaded = ScoreIO.LoadMidi(path);
+                Check(loaded.Tracks.Count == 1 && loaded.Tracks[0].Notes.Count == 3, "口琴导出实际回读为单轨三个音符");
+                ScoreTrack track = loaded.Tracks[0];
+                Check(track.Name.Contains(title), "口琴导出的中文与Unicode标题保留");
+                int[] pitches = { 60, 60, 64 }, velocities = { 90, 80, 72 };
+                double[] starts = { leadingRest, leadingRest + 0.5, leadingRest + 1.25 }, durations = { 0.5, 0.5, 0.25 };
+                for (int i = 0; i < 3; i++)
+                {
+                    Check(track.Notes[i].Pitch == pitches[i] && track.Notes[i].Velocity == velocities[i], "口琴音色不改变音高和力度");
+                    Near(track.Notes[i].Start, starts[i], "口琴回读起音时刻保留");
+                    Near(track.Notes[i].Duration, durations[i], "口琴回读音长与同音off/on次序保留");
+                }
+                Check(notes[0].Start == leadingRest + 1.25 && notes[0].Duration == 0.25 && notes[0].Pitch == 64,
+                    "口琴导出不重排或改写源音符");
+            }
+        }
+
+        private static void HarmonicaAtomicSave(string folder)
+        {
+            var save = HarmonicaWriter();
+            string path = Path.Combine(folder, "口琴原子保存.mid");
+            NoteEvent[] notes = { N(67, 0.5, 1, 100) };
+            MidiWriter.Save(path, new[] { N(60, 0, 1, 90) }, "原始");
+            byte[] original = File.ReadAllBytes(path);
+            int fileCount = Directory.GetFiles(folder).Length;
+            using (var reader = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            {
+                Throws<IOException>(delegate { save(path, notes, "口琴", 3); }, "口琴原子替换被占用时明确失败");
+                Check(Convert.ToBase64String(File.ReadAllBytes(path)) == Convert.ToBase64String(original), "口琴替换失败保留原文件完整字节");
+                Check(Directory.GetFiles(folder).Length == fileCount, "口琴替换失败不遗留临时文件");
+            }
+            Throws<FormatException>(delegate { save(path, new[] { N(128, 0, 1, 90) }, "无效", 3); }, "口琴入口也先校验音符再写文件");
+            Throws<ArgumentOutOfRangeException>(delegate { save(path, notes, "过短", 1); }, "口琴入口拒绝未覆盖音符的终点");
+            Throws<ArgumentException>(delegate { save(" ", notes, "空白路径", 3); }, "口琴入口拒绝空白路径");
+            Check(Convert.ToBase64String(File.ReadAllBytes(path)) == Convert.ToBase64String(original), "口琴参数校验失败不覆盖原文件");
+            save(path, notes, "口琴", 3);
+            CheckHarmonicaProgram(File.ReadAllBytes(path));
+            Check(ScoreIO.LoadMidi(path).Tracks[0].Notes[0].Pitch == 67 && ReadEndTick(File.ReadAllBytes(path)) == 2880,
+                "解除占用后口琴原子替换保留新音符与完整时长");
+            Check(Directory.GetFiles(folder).Length == fileCount, "口琴替换成功不遗留临时文件");
+        }
+
+        private static int CheckHarmonicaProgram(byte[] bytes)
+        {
+            int position = 22, tick = 0, programs = 0, programOffset = -1;
+            bool noteSeen = false, endSeen = false;
+            while (position < bytes.Length)
+            {
+                int eventOffset = position, delta = ReadVariable(bytes, ref position);
+                tick += delta;
+                int status = bytes[position++];
+                if (status == 0xff)
+                {
+                    int type = bytes[position++], length = ReadVariable(bytes, ref position);
+                    position += length;
+                    if (type == 0x2f) { endSeen = true; break; }
+                }
+                else if (status == 0xc0)
+                {
+                    programs++; programOffset = eventOffset;
+                    Check(bytes[position++] == 22 && delta == 0 && tick == 0 && !noteSeen,
+                        "实际MIDI事件在首音前以delta0设置通道0、零基编号22的Harmonica");
+                    Check(position - eventOffset == 3 && bytes[eventOffset] == 0, "口琴乐器事件编码为00 C0 16");
+                }
+                else if (status == 0x80 || status == 0x90) { noteSeen = true; position += 2; }
+                else throw new Exception("口琴导出包含非预期MIDI事件或通道。");
+            }
+            Check(programs == 1 && endSeen && position == bytes.Length, "口琴文件仅有一次乐器选择且完整到达EOT");
+            return programOffset;
+        }
+
         private static int ReadEndTick(byte[] bytes)
         {
             int position = 22, tick = 0;
@@ -165,6 +268,7 @@ namespace HarmonicaStudio.Tests
                     position += length;
                 }
                 else if (status == 0x80 || status == 0x90) position += 2;
+                else if (status == 0xc0) position++;
                 else throw new Exception("写出文件含非预期 MIDI 事件。");
             }
             throw new Exception("写出文件没有 EOT。");

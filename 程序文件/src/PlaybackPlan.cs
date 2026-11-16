@@ -122,8 +122,10 @@ namespace HarmonicaStudio
             double count = 0;
             foreach (NoteEvent note in notes)
             {
-                if (note.Start >= duration) continue;
-                count += Math.Ceiling((duration - note.Start) / cycle);
+                if (ReachesEnd(note.Start, duration)) continue;
+                double repetitions = Math.Ceiling((duration - note.Start) / cycle);
+                if (ReachesEnd((repetitions - 1) * cycle + note.Start, duration)) repetitions--;
+                count += Math.Max(0, repetitions);
                 if (count > maximum)
                     throw new ArgumentException("循环后超过 200000 个旋律或背景音符，请缩短时长或扩大循环片段。");
             }
@@ -141,7 +143,7 @@ namespace HarmonicaStudio
                 foreach (NoteEvent note in segment)
                 {
                     double begin = origin + note.Start;
-                    if (begin >= duration) break;
+                    if (ReachesEnd(begin, duration)) break;
                     double finish = Math.Min(duration, origin + note.Start + note.Duration);
                     if (finish > begin)
                         output.Add(new NoteEvent { Pitch = note.Pitch, Velocity = note.Velocity,
@@ -152,5 +154,13 @@ namespace HarmonicaStudio
         }
 
         private static bool Finite(double value) { return !Double.IsNaN(value) && !Double.IsInfinity(value); }
+
+        private static bool ReachesEnd(double start, double end)
+        {
+            // A mathematically exact cycle can land a few ULPs before its end.
+            // Only absorb arithmetic noise; real short partial notes must remain.
+            double tolerance = Math.Max(1.0, Math.Abs(end)) * 3.552713678800501e-15;
+            return start >= end || end - start <= tolerance;
+        }
     }
 }

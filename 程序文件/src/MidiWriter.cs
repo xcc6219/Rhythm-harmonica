@@ -27,6 +27,13 @@ namespace HarmonicaStudio
             SaveCompleteFile(path, bytes);
         }
 
+        public static void SaveHarmonica(string path, IEnumerable<NoteEvent> notes, string title, double duration)
+        {
+            if (String.IsNullOrWhiteSpace(path)) throw new ArgumentException("请选择 MIDI 保存路径。", "path");
+            byte[] bytes = ToBytesCore(notes, title, duration, true);
+            SaveCompleteFile(path, bytes);
+        }
+
         private static void SaveCompleteFile(string path, byte[] bytes)
         {
             string destination = Path.GetFullPath(path);
@@ -68,7 +75,7 @@ namespace HarmonicaStudio
             return ToBytesCore(notes, title, duration);
         }
 
-        private static byte[] ToBytesCore(IEnumerable<NoteEvent> notes, string title, double? requestedDuration)
+        private static byte[] ToBytesCore(IEnumerable<NoteEvent> notes, string title, double? requestedDuration, bool harmonica = false)
         {
             if (notes == null) throw new ArgumentNullException("notes");
             if (requestedDuration.HasValue && (!Finite(requestedDuration.Value) || requestedDuration.Value <= 0 ||
@@ -138,6 +145,12 @@ namespace HarmonicaStudio
                 Variable(track, titleBytes.Length); track.Write(titleBytes, 0, titleBytes.Length);
                 Variable(track, 0); track.WriteByte(0xff); track.WriteByte(0x51); track.WriteByte(3);
                 track.WriteByte(0x07); track.WriteByte(0xa1); track.WriteByte(0x20);
+                if (harmonica)
+                {
+                    // GM Harmonica is instrument 23 in one-based lists; the
+                    // channel-zero Program Change payload is zero-based 22.
+                    Variable(track, 0); track.WriteByte(0xc0); track.WriteByte(22);
+                }
                 int previous = 0;
                 foreach (MidiEvent item in events)
                 {

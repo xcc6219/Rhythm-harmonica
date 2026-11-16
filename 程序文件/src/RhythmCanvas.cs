@@ -16,6 +16,7 @@ namespace HarmonicaStudio
         public int BasePitch = 60;
         public bool Compact;
         public bool Automatic;
+        public double PlaybackSpeed = 1.0;
         public string CountdownText;
         public string SongTitle;
         public string SongSubtitle;
@@ -38,6 +39,7 @@ namespace HarmonicaStudio
         // All geometry and fonts share this reference coordinate system. The
         // complete score is fitted once, rather than hiding individual panels.
         private const float SceneWidth = 1200, SceneHeight = 360;
+        private const float PlaybackStatusWidth = 220;
         private readonly Font smallFont = Theme.PixelFont(13.5f);
         private readonly Font labelFont = Theme.PixelFont(13.5f);
         private readonly Font largeHeaderFont = Theme.PixelFont(16.5f, FontStyle.Bold);
@@ -487,10 +489,10 @@ namespace HarmonicaStudio
             {
                 countdownLabel = CountdownCaption(CountdownText);
             }
-            float statusWidth = Math.Min(180, StageWidth * .30f);
+            float statusWidth = Math.Min(PlaybackStatusWidth, StageWidth * .30f);
             DrawText(g, SongCaption(), largeHeaderFont, TextColor,
                 new RectangleF(panel.X + 10, panel.Y + 2, panel.Width - statusWidth - 18, rowHeight), false);
-            DrawText(g, countdown ? countdownLabel : (Automatic ? "自动吹奏" : "手动跟谱") + " · " + FutureSeconds + "秒预览",
+            DrawText(g, countdown ? countdownLabel : PlaybackCaption(),
                 labelFont, countdown ? GoldColor : MutedColor,
                 new RectangleF(panel.Right - statusWidth - 8, panel.Y + 2, statusWidth, rowHeight), true);
             DrawText(g, CurrentCueText(), smallFont, current != null && !current.Finger.Playable ? PinkColor : GoldColor,
@@ -507,6 +509,13 @@ namespace HarmonicaStudio
             if (subtitle.StartsWith("旋律估计 · ", StringComparison.Ordinal)) return "旋律估计 · " + title;
             if (subtitle.StartsWith("旋律候选 · ", StringComparison.Ordinal)) return "旋律候选 · " + title;
             return "当前歌曲：" + title;
+        }
+
+        private string PlaybackCaption()
+        {
+            double speed = Double.IsNaN(PlaybackSpeed) || Double.IsInfinity(PlaybackSpeed) || PlaybackSpeed <= 0 ? 1 : PlaybackSpeed;
+            return (Automatic ? "自动" : "跟谱") + " " + speed.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) +
+                "× · " + FutureSeconds + "秒预览";
         }
 
         // The fixed cues remain readable when dense notes become short bars.

@@ -111,9 +111,15 @@ public static class LibraryConversionTests
             "默认按手动移调后的最后可奏音结束，残余高音不能变成无声长尾。");
         var trim = Field<CheckBox>(form,"trimTailCheck"); trim.Checked=false;
         notes = Field<List<NoteEvent>>(form,"notes");
-        Assert(notes[0].Pitch == 84 && notes[1].Pitch == 88 && notes[2].Pitch == 99,
-            "手动移调的残余超域音保留音高和时间，不能跨八度折回。");
+        Assert(notes.Count == 1 && notes[0].Pitch == 84,
+            "统一口琴编配只输出可奏音，手动移调的残余超域音不能跨八度折回。");
+        Assert(Math.Abs(Field<double>(form, "noteDuration") - 1.8) < .002,
+            "关闭尾部整理时，超域音仍保留为原时长的静音尾部，不能提前结束。");
+        Assert(Field<SongScore>(form, "score").Tracks.SelectMany(t => t.Notes).Select(n => n.Pitch).SequenceEqual(new[] { 60, 64, 75 }),
+            "可奏副本的过滤不删除或改写源MIDI，原始三音仍可重新移调。");
         transpose.Value = 0; trim.Checked=true;
+        Assert(Field<List<NoteEvent>>(form, "notes").Select(n => n.Pitch).SequenceEqual(new[] { 60, 64, 75 }),
+            "恢复移调后重新从原谱生成完整旋律，超域过滤可逆。");
         Assert(Field<ListBox>(form, "songs").ContextMenuStrip.Items.Cast<ToolStripItem>()
             .Any(item => item.Text == "查找主旋律谱（保留原谱）"), "曲库可直接进入已有主旋律谱入口。");
         MethodInfo artist = typeof(MainForm).GetMethod("KnownSongArtist", BindingFlags.NonPublic | BindingFlags.Static);

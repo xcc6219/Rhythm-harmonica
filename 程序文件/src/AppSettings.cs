@@ -31,6 +31,7 @@ namespace HarmonicaStudio
         public string AudioDownloadDirectory = "";
         public bool TrimInvalidTail = true;
         public bool AdaptNearbyPitch = true;
+        public bool SimplifyOrnaments = true;
         public List<string> HiddenBuiltinTitles = new List<string>();
 
         public static AppSettings Load(string path)
@@ -75,6 +76,7 @@ namespace HarmonicaStudio
                 if (record.AudioDownloadDirectory != null) result.AudioDownloadDirectory = record.AudioDownloadDirectory;
                 if (record.TrimInvalidTail.HasValue) result.TrimInvalidTail = record.TrimInvalidTail.Value;
                 if (record.AdaptNearbyPitch.HasValue) result.AdaptNearbyPitch = record.AdaptNearbyPitch.Value;
+                if (record.SimplifyOrnaments.HasValue) result.SimplifyOrnaments = record.SimplifyOrnaments.Value;
                 if (record.HiddenBuiltinTitles != null) result.HiddenBuiltinTitles = record.HiddenBuiltinTitles;
                 result.Normalize();
             }
@@ -119,6 +121,7 @@ namespace HarmonicaStudio
                     AudioDownloadDirectory = AudioDownloadDirectory,
                     TrimInvalidTail = TrimInvalidTail,
                     AdaptNearbyPitch = AdaptNearbyPitch,
+                    SimplifyOrnaments = SimplifyOrnaments,
                     HiddenBuiltinTitles = HiddenBuiltinTitles
                 };
                 using (FileStream stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
@@ -228,6 +231,7 @@ namespace HarmonicaStudio
             [DataMember(Order = 20)] public bool? TrimInvalidTail;
             [DataMember(Order = 21)] public List<string> HiddenBuiltinTitles;
             [DataMember(Order = 22)] public bool? AdaptNearbyPitch;
+            [DataMember(Order = 23)] public bool? SimplifyOrnaments;
         }
     }
 }
